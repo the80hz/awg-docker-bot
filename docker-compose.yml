@@ -1,0 +1,17 @@
+services:
+  awg-bot:
+    build: .
+    container_name: awg-bot
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Moscow
+    volumes:
+      - ./users:/app/users
+      - ./files:/app/files
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Если нужен доступ к другим скриптам/файлам, добавьте volume
+    # - ./awg:/app/awg
+    # Порт не нужен, если используется polling (aiogram)
+    # Если нужен webhook, раскомментируйте:
+    # ports:
+    #   - "8443:8443"
