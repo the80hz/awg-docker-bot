@@ -197,7 +197,7 @@ async def load_isp_cache_task():
 
 def create_zip(backup_filepath):
     with zipfile.ZipFile(backup_filepath, 'w') as zipf:
-        for main_file in ['awg-decode.py', 'newclient.sh', 'removeclient.sh']:
+        for main_file in ['awg/awg-decode.py', 'awg/newclient.sh', 'awg/removeclient.sh']:
             if os.path.exists(main_file):
                 zipf.write(main_file, main_file)
         for root, dirs, files in os.walk('files'):
@@ -1688,7 +1688,7 @@ async def generate_vpn_key(conf_path: str) -> str:
     try:
         process = await asyncio.create_subprocess_exec(
             'python3.11',
-            'awg-decode.py',
+            'awg/awg-decode.py',
             '--encode',
             conf_path,
             stdout=asyncio.subprocess.PIPE,

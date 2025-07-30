@@ -937,7 +937,7 @@ AllowedIPs = {client_ip}
             logger.error(f"Ошибка при добавлении пользователя через SSH: {e}")
             return False
     else:
-        cmd = ["./newclient.sh", id_user, endpoint, wg_config_file, docker_container]
+        cmd = ["awg/newclient.sh", id_user, endpoint, wg_config_file, docker_container]
         if subprocess.call(cmd) == 0:
             return True
         return False
@@ -1075,7 +1075,7 @@ def deactive_user_db(client_name, server_id=None):
             logger.error(f"Ошибка при удалении пользователя через SSH: {e}")
             return False
     else:
-        if subprocess.call(["./removeclient.sh", client_name, client_public_key, wg_config_file, docker_container]) == 0:
+        if subprocess.call(["awg/removeclient.sh", client_name, client_public_key, wg_config_file, docker_container]) == 0:
             return True
         return False
 
