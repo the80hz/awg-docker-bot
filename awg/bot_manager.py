@@ -542,9 +542,9 @@ def parse_traffic_limit(traffic_limit: str) -> int:
 
 @dp.callback_query_handler(lambda c: c.data.startswith('duration_'))
 async def set_config_duration(callback: types.CallbackQuery):
-    if not is_admin(callback):
+    '''if not is_admin(callback):
         await callback.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     parts = callback.data.split('_')
     if len(parts) < 4:
         await callback.answer("Некорректные данные.", show_alert=True)
@@ -579,9 +579,9 @@ def format_vpn_key(vpn_key, num_lines=8):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('traffic_limit_'))
 async def set_traffic_limit(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     user_id = callback_query.from_user.id
     parts = callback_query.data.split('_', 3)
     if len(parts) < 4:
@@ -1335,9 +1335,9 @@ async def add_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('home'))
 async def return_home(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     user_id = callback_query.from_user.id
     main_message = user_main_messages.get(user_id)
     if main_message:
@@ -1376,9 +1376,9 @@ async def return_home(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('send_config_'))
 async def send_user_config(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
         
     user_id = callback_query.from_user.id
     if not current_server:
