@@ -52,26 +52,25 @@ except Exception:
     sys.exit(1)
 
 # Если admin_id < 0 — это id чата, если > 0 — id пользователя
-def is_admin(message_or_callback):
-    # Получаем объект чата и пользователя, откуда бы они ни пришли
-    chat = getattr(message_or_callback, 'chat', None)
-    from_user = getattr(message_or_callback, 'from_user', None)
-
-    if hasattr(message_or_callback, 'message') and message_or_callback.message:
-        # Это callback_query, берем данные из вложенного сообщения
-        if not chat:
-            chat = getattr(message_or_callback.message, 'chat', None)
-        if not from_user:
-            from_user = getattr(message_or_callback, 'from_user', None)
-
-    # Если admin_id — это ID чата (отрицательное число)
-    if admin < 0:
-        # Разрешаем любые действия, если они происходят в админском чате
-        return chat and chat.id == admin
-    # Если admin_id — это ID пользователя (положительное число)
+def is_admin(message_or_callback: types.Message | types.CallbackQuery) -> bool:
+    """
+    Проверяет, пришло ли событие от админа (пользователя или чата).
+    """
+    # Для callback_query нужно проверять чат исходного сообщения
+    if isinstance(message_or_callback, types.CallbackQuery):
+        chat_id = message_or_callback.message.chat.id
+        user_id = message_or_callback.from_user.id
+    # Для обычного сообщения проверяем его собственный чат
     else:
-        # Разрешаем действия только от этого пользователя
-        return from_user and from_user.id == admin
+        chat_id = message_or_callback.chat.id
+        user_id = message_or_callback.from_user.id
+
+    # Если admin - это ID чата (отрицательное число)
+    if admin < 0:
+        return chat_id == admin
+    # Если admin - это ID пользователя (положительное число)
+    else:
+        return user_id == admin
 
 current_server = None
 WG_CONFIG_FILE = None
@@ -102,7 +101,7 @@ def update_server_settings(server_id=None):
 
 class AdminMessageDeletionMiddleware(BaseMiddleware):
     async def on_process_message(self, message: types.Message, data: dict):
-        if message.from_user.id == admin:
+        if is_admin(message):
             asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=2))
 
 dp = Dispatcher(bot)
@@ -247,7 +246,7 @@ def parse_relative_time(relative_str: str) -> datetime:
 
 @dp.message_handler(commands=['start', 'help'])
 async def help_command_handler(message: types.Message):
-    if message.chat.id == admin:
+    if is_admin(message):
         sent_message = await message.answer(f"Выберите действие\nТекущий сервер: *{current_server}*", reply_markup=main_menu_markup, parse_mode='MarkDown')
         user_main_messages[admin] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
         try:
@@ -509,7 +508,7 @@ async def handle_messages(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('add_user'))
 async def prompt_for_user_name(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
