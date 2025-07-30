@@ -581,8 +581,9 @@ async def set_config_duration(callback: types.CallbackQuery):
     duration_choice = parts[1]
     client_name = parts[2]
     ipv6_flag = parts[3]
-    user_main_messages[admin]['duration_choice'] = duration_choice
-    user_main_messages[admin]['state'] = 'waiting_for_traffic_limit'
+    user_id = callback.from_user.id
+    user_main_messages[user_id]['duration_choice'] = duration_choice
+    user_main_messages[user_id]['state'] = 'waiting_for_traffic_limit'
     traffic_buttons = [
         InlineKeyboardButton(limit, callback_data=f"traffic_limit_{limit}_{client_name}")
         for limit in TRAFFIC_LIMITS
@@ -610,6 +611,7 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
     '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return'''
+    user_id = callback_query.from_user.id
     parts = callback_query.data.split('_', 3)
     if len(parts) < 4:
         await callback_query.answer("Некорректные данные.", show_alert=True)
@@ -620,9 +622,9 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
     if traffic_limit != "Неограниченно" and traffic_bytes is None:
         await callback_query.answer("Некорректный формат лимита трафика.", show_alert=True)
         return
-    user_main_messages[admin]['traffic_limit'] = traffic_limit
-    user_main_messages[admin]['state'] = None
-    duration_choice = user_main_messages.get(admin, {}).get('duration_choice')
+    user_main_messages[user_id]['traffic_limit'] = traffic_limit
+    user_main_messages[user_id]['state'] = None
+    duration_choice = user_main_messages.get(user_id, {}).get('duration_choice')
     if duration_choice == '1h':
         duration = timedelta(hours=1)
     elif duration_choice == '1d':
@@ -672,33 +674,33 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
             if os.path.exists(conf_path):
                 with open(conf_path, 'rb') as config:
                     sent_doc = await bot.send_document(
-                        admin,
+                        user_id,
                         config,
                         caption=caption,
                         parse_mode="Markdown",
                         disable_notification=True
                     )
-                    asyncio.create_task(delete_message_after_delay(admin, sent_doc.message_id, delay=15))
+                    asyncio.create_task(delete_message_after_delay(user_id, sent_doc.message_id, delay=15))
         except FileNotFoundError:
             confirmation_text = "Не удалось найти файлы конфигурации для указанного пользователя."
-            sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
+            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
             await callback_query.answer()
             return
         except Exception as e:
             logger.error(f"Ошибка при отправке конфигурации: {e}")
             confirmation_text = "Произошла ошибка."
-            sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
+            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
             await callback_query.answer()
             return
         sent_confirmation = await bot.send_message(
-            chat_id=admin,
+            chat_id=user_id,
             text=confirmation_text,
             parse_mode="Markdown",
             disable_notification=True
         )
-        asyncio.create_task(delete_message_after_delay(admin, sent_confirmation.message_id, delay=15))
+        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
     else:
         confirmation_text = "Не удалось добавить пользователя."
         sent_confirmation = await bot.send_message(
@@ -707,15 +709,18 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
             parse_mode="Markdown",
             disable_notification=True
         )
-        asyncio.create_task(delete_message_after_delay(admin, sent_confirmation.message_id, delay=15))
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
-    if main_chat_id and main_message_id:
+        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
+    main_message = user_main_messages.get(user_id)
+    if main_message:
+        # Определяем, какое меню показать
+        menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+        text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
+        
         await bot.edit_message_text(
-            chat_id=main_chat_id,
-            message_id=main_message_id,
-            text=f"Выберите действие\nТекущий сервер: *{current_server}*",
-            reply_markup=main_menu_markup,
+            chat_id=main_message['chat_id'],
+            message_id=main_message['message_id'],
+            text=text_to_show,
+            reply_markup=menu_to_show,
             parse_mode='MarkDown'
         )
     else:
@@ -862,8 +867,9 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
         InlineKeyboardButton("Домой", callback_data="home")
     )
 
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
+    user_id = callback_query.from_user.id
+    main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+    main_message_id = user_main_messages.get(user_id, {}).get('message_id')
 
     if main_chat_id and main_message_id:
         try:
@@ -1361,19 +1367,24 @@ async def return_home(callback_query: types.CallbackQuery):
     '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return'''
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
-    if main_chat_id and main_message_id:
-        user_main_messages[admin].pop('state', None)
-        user_main_messages[admin].pop('client_name', None)
-        user_main_messages[admin].pop('duration_choice', None)
-        user_main_messages[admin].pop('traffic_limit', None)
+    user_id = callback_query.from_user.id
+    main_message = user_main_messages.get(user_id) # <--- ИЗМЕНЕНО
+    if main_message:
+        user_main_messages[user_id].pop('state', None)
+        user_main_messages[user_id].pop('client_name', None)
+        user_main_messages[user_id][user_id].pop('duration_choice', None)
+        user_main_messages[user_id].pop('traffic_limit', None)
+
+        # Определяем меню и текст для пользователя
+        menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+        text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
+
         try:
             await bot.edit_message_text(
-                chat_id=main_chat_id,
-                message_id=main_message_id,
-                text=f"Выберите действие\nТекущий сервер: *{current_server}*",
-                reply_markup=main_menu_markup,
+                chat_id=main_message['chat_id'],
+                message_id=main_message['message_id'],
+                text=text_to_show,
+                reply_markup=menu_to_show,
                 parse_mode='MarkDown'
             )
         except:
@@ -1398,11 +1409,20 @@ async def send_user_config(callback_query: types.CallbackQuery):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return'''
         
+    user_id = callback_query.from_user.id
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
     _, username = callback_query.data.split('send_config_', 1)
     username = username.strip()
+
+    if not is_admin(callback_query):
+        expirations = db.load_expirations()
+        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+        if owner_id != user_id:
+            await callback_query.answer("У вас нет доступа к этой конфигурации.", show_alert=True)
+            return
+
     sent_messages = []
     try:
         user_dir = os.path.join('users', username)
@@ -1424,7 +1444,7 @@ async def send_user_config(callback_query: types.CallbackQuery):
                 caption = "VPN ключ не был сгенерирован."
             with open(conf_path, 'rb') as config:
                 sent_doc = await bot.send_document(
-                    admin,
+                    user_id,
                     config,
                     caption=caption,
                     parse_mode="Markdown",
@@ -1433,33 +1453,33 @@ async def send_user_config(callback_query: types.CallbackQuery):
                 sent_messages.append(sent_doc.message_id)
         else:
             confirmation_text = f"Не удалось создать конфигурацию для пользователя **{username}**."
-            sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
+            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
             await callback_query.answer()
             return
     except Exception as e:
         confirmation_text = f"Произошла ошибка: {e}"
-        sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
-        asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
+        sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+        asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
         await callback_query.answer()
         return
     if not sent_messages:
         confirmation_text = f"Не удалось найти файлы конфигурации для пользователя **{username}**."
-        sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
-        asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
+        sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+        asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
         await callback_query.answer()
         return
     else:
         confirmation_text = f"Конфигурация для **{username}** отправлена."
         sent_confirmation = await bot.send_message(
-            chat_id=admin,
+            chat_id=user_id,
             text=confirmation_text,
             parse_mode="Markdown",
             disable_notification=True
         )
-        asyncio.create_task(delete_message_after_delay(admin, sent_confirmation.message_id, delay=15))
+        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
     for message_id in sent_messages:
-        asyncio.create_task(delete_message_after_delay(admin, message_id, delay=15))
+        asyncio.create_task(delete_message_after_delay(user_id, message_id, delay=15))
         
     clients = db.get_client_list(server_id=current_server)
     client_info = next((c for c in clients if c[0] == username), None)
