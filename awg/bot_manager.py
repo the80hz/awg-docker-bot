@@ -544,7 +544,7 @@ def parse_traffic_limit(traffic_limit: str) -> int:
 
 @dp.callback_query_handler(lambda c: c.data.startswith('duration_'))
 async def set_config_duration(callback: types.CallbackQuery):
-    if callback.from_user.id != admin:
+    if not is_admin(callback):
         await callback.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     parts = callback.data.split('_')
