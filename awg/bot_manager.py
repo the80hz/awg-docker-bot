@@ -476,7 +476,7 @@ async def handle_messages(message: types.Message):
     elif user_state == 'waiting_for_user_name':
         user_name = message.text.strip()
         if not all(c.isalnum() or c in "-" for c in user_name):
-            await message.reply("Имя пользователя может содержать только буквы, цифры и дефисы.")
+            sent_message = await message.reply("Имя пользователя может содержать только буквы, цифры и дефисы.")
             asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
             return
         user_main_messages[admin]['client_name'] = user_name
@@ -503,7 +503,7 @@ async def handle_messages(message: types.Message):
         else:
             await message.answer("Ошибка: главное сообщение не найдено.")
     else:
-        await message.reply("Неизвестная команда или действие.")
+        sent_message = await message.reply("Неизвестная команда или действие.")
         asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('add_user'))
