@@ -1372,7 +1372,7 @@ async def return_home(callback_query: types.CallbackQuery):
     if main_message:
         user_main_messages[user_id].pop('state', None)
         user_main_messages[user_id].pop('client_name', None)
-        user_main_messages[user_id][user_id].pop('duration_choice', None)
+        user_main_messages[user_id].pop('duration_choice', None)
         user_main_messages[user_id].pop('traffic_limit', None)
 
         # Определяем меню и текст для пользователя
