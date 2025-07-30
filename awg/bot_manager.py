@@ -53,20 +53,24 @@ except Exception:
 
 # Если admin_id < 0 — это id чата, если > 0 — id пользователя
 def is_admin(message_or_callback):
-    # Если admin_id — id чата, разрешаем любые действия внутри этого чата
+    # Получаем объект чата и пользователя, откуда бы они ни пришли
+    chat = getattr(message_or_callback, 'chat', None)
+    from_user = getattr(message_or_callback, 'from_user', None)
+
+    if hasattr(message_or_callback, 'message') and message_or_callback.message:
+        # Это callback_query, берем данные из вложенного сообщения
+        if not chat:
+            chat = getattr(message_or_callback.message, 'chat', None)
+        if not from_user:
+            from_user = getattr(message_or_callback, 'from_user', None)
+
+    # Если admin_id — это ID чата (отрицательное число)
     if admin < 0:
-        chat_id = getattr(message_or_callback, 'chat', None)
-        if chat_id is None and hasattr(message_or_callback, 'message'):
-            chat_id = getattr(message_or_callback.message, 'chat', None)
-        if chat_id and chat_id.id == admin:
-            return True
-        # Для приватных сообщений (user id), запрещаем
-        return False
+        # Разрешаем любые действия, если они происходят в админском чате
+        return chat and chat.id == admin
+    # Если admin_id — это ID пользователя (положительное число)
     else:
-        # admin_id — id пользователя
-        from_user = getattr(message_or_callback, 'from_user', None)
-        if from_user is None and hasattr(message_or_callback, 'message'):
-            from_user = getattr(message_or_callback.message, 'from_user', None)
+        # Разрешаем действия только от этого пользователя
         return from_user and from_user.id == admin
 
 current_server = None
