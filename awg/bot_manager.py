@@ -31,6 +31,7 @@ CURRENT_TIMEZONE = ZoneInfo('Europe/Moscow')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 config = db.get_config()
 bot_token = config.get('bot_token')
 admin_id = config.get('admin_id')
@@ -44,7 +45,29 @@ if not servers:
     logger.warning("Не найдено ни одного сервера в конфигурации")
 
 bot = Bot(bot_token)
-admin = int(admin_id)
+try:
+    admin = int(admin_id)
+except Exception:
+    logger.error("admin_id должен быть числом (id пользователя или id чата)")
+    sys.exit(1)
+
+# Если admin_id < 0 — это id чата, если > 0 — id пользователя
+def is_admin(message_or_callback):
+    # Если admin_id — id чата, разрешаем любые действия внутри этого чата
+    if admin < 0:
+        chat_id = getattr(message_or_callback, 'chat', None)
+        if chat_id is None and hasattr(message_or_callback, 'message'):
+            chat_id = getattr(message_or_callback.message, 'chat', None)
+        if chat_id and chat_id.id == admin:
+            return True
+        # Для приватных сообщений (user id), запрещаем
+        return False
+    else:
+        # admin_id — id пользователя
+        from_user = getattr(message_or_callback, 'from_user', None)
+        if from_user is None and hasattr(message_or_callback, 'message'):
+            from_user = getattr(message_or_callback.message, 'from_user', None)
+        return from_user and from_user.id == admin
 
 current_server = None
 WG_CONFIG_FILE = None
