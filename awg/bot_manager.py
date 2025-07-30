@@ -488,35 +488,6 @@ async def handle_messages(message: types.Message):
         
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
             
-    elif user_state == 'waiting_for_user_name':
-        user_name = message.text.strip()
-        if not all(c.isalnum() or c in "-" for c in user_name):
-            sent_message = await message.reply("Имя пользователя может содержать только буквы, цифры и дефисы.")
-            asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
-            return
-        user_main_messages[admin]['client_name'] = user_name
-        user_main_messages[admin]['state'] = 'waiting_for_duration'
-        duration_buttons = [
-            InlineKeyboardButton("1 час", callback_data=f"duration_1h_{user_name}_noipv6"),
-            InlineKeyboardButton("1 день", callback_data=f"duration_1d_{user_name}_noipv6"),
-            InlineKeyboardButton("1 неделя", callback_data=f"duration_1w_{user_name}_noipv6"),
-            InlineKeyboardButton("1 месяц", callback_data=f"duration_1m_{user_name}_noipv6"),
-            InlineKeyboardButton("Без ограничений", callback_data=f"duration_unlimited_{user_name}_noipv6"),
-            InlineKeyboardButton("Домой", callback_data="home")
-        ]
-        duration_markup = InlineKeyboardMarkup(row_width=1).add(*duration_buttons)
-        main_chat_id = user_main_messages[admin].get('chat_id')
-        main_message_id = user_main_messages[admin].get('message_id')
-        if main_chat_id and main_message_id:
-            await bot.edit_message_text(
-                chat_id=main_chat_id,
-                message_id=main_message_id,
-                text=f"Выберите время действия конфигурации для пользователя **{user_name}**:",
-                parse_mode="Markdown",
-                reply_markup=duration_markup
-            )
-        else:
-            await message.answer("Ошибка: главное сообщение не найдено.")
     else:
         sent_message = await message.reply("Неизвестная команда или действие.")
         asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
@@ -571,9 +542,9 @@ def parse_traffic_limit(traffic_limit: str) -> int:
 
 @dp.callback_query_handler(lambda c: c.data.startswith('duration_'))
 async def set_config_duration(callback: types.CallbackQuery):
-    '''if not is_admin(callback):
+    if not is_admin(callback):
         await callback.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
+        return
     parts = callback.data.split('_')
     if len(parts) < 4:
         await callback.answer("Некорректные данные.", show_alert=True)
@@ -608,9 +579,9 @@ def format_vpn_key(vpn_key, num_lines=8):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('traffic_limit_'))
 async def set_traffic_limit(callback_query: types.CallbackQuery):
-    '''if not is_admin(callback_query):
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
+        return
     user_id = callback_query.from_user.id
     parts = callback_query.data.split('_', 3)
     if len(parts) < 4:
@@ -704,7 +675,7 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
     else:
         confirmation_text = "Не удалось добавить пользователя."
         sent_confirmation = await bot.send_message(
-            chat_id=admin,
+            chat_id=user_id,
             text=confirmation_text,
             parse_mode="Markdown",
             disable_notification=True
@@ -729,9 +700,9 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('client_'))
 async def client_selected_callback(callback_query: types.CallbackQuery):
-    '''if not is_admin(callback_query):
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
+        return
         
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
@@ -1364,11 +1335,11 @@ async def add_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('home'))
 async def return_home(callback_query: types.CallbackQuery):
-    '''if not is_admin(callback_query):
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
+        return
     user_id = callback_query.from_user.id
-    main_message = user_main_messages.get(user_id) # <--- ИЗМЕНЕНО
+    main_message = user_main_messages.get(user_id)
     if main_message:
         user_main_messages[user_id].pop('state', None)
         user_main_messages[user_id].pop('client_name', None)
@@ -1405,9 +1376,9 @@ async def return_home(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('send_config_'))
 async def send_user_config(callback_query: types.CallbackQuery):
-    '''if not is_admin(callback_query):
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
+        return
         
     user_id = callback_query.from_user.id
     if not current_server:
