@@ -607,9 +607,9 @@ def format_vpn_key(vpn_key, num_lines=8):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('traffic_limit_'))
 async def set_traffic_limit(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     parts = callback_query.data.split('_', 3)
     if len(parts) < 4:
         await callback_query.answer("Некорректные данные.", show_alert=True)
