@@ -1116,12 +1116,13 @@ def save_expirations(expirations):
         for server_id, info in servers.items():
             data[user][server_id] = {
                 'expiration_time': info['expiration_time'].isoformat() if info['expiration_time'] else None,
-                'traffic_limit': info.get('traffic_limit', "Неограниченно")
+                'traffic_limit': info.get('traffic_limit', "Неограниченно"),
+                'owner_id': info.get('owner_id')
             }
     with open(EXPIRATIONS_FILE, 'w') as f:
         json.dump(data, f)
 
-def set_user_expiration(username: str, expiration: datetime, traffic_limit: str, server_id: str = None):
+def set_user_expiration(username: str, expiration: datetime, traffic_limit: str, server_id: str = None, owner_id: str = None):
     if server_id is None:
         return
     expirations = load_expirations()
@@ -1136,6 +1137,8 @@ def set_user_expiration(username: str, expiration: datetime, traffic_limit: str,
     else:
         expirations[username][server_id]['expiration_time'] = None
     expirations[username][server_id]['traffic_limit'] = traffic_limit
+    if owner_id is not None:
+        expirations[username][server_id]['owner_id'] = owner_id
     save_expirations(expirations)
 
 def remove_user_expiration(username: str, server_id: str = None):
@@ -1251,3 +1254,18 @@ def ensure_peer_names(server_id=None):
     except Exception as e:
         logger.error(f"Ошибка при обновлении имен пиров: {e}")
         return False
+
+def get_clients_by_owner(owner_id: int, server_id: str = None):
+    if server_id is None:
+        return []
+    expirations = load_expirations()
+    user_clients = []
+    all_clients = get_client_list(server_id=server_id)
+    
+    for client_name, servers in expirations.items():
+        if server_id in servers and servers[server_id].get('owner_id') == owner_id:
+            # Находим полную информацию о клиенте в общем списке
+            client_info = next((c for c in all_clients if c[0] == client_name), None)
+            if client_info:
+                user_clients.append(client_info)
+    return user_clients
