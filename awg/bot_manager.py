@@ -571,9 +571,9 @@ def parse_traffic_limit(traffic_limit: str) -> int:
 
 @dp.callback_query_handler(lambda c: c.data.startswith('duration_'))
 async def set_config_duration(callback: types.CallbackQuery):
-    if not is_admin(callback):
+    '''if not is_admin(callback):
         await callback.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     parts = callback.data.split('_')
     if len(parts) < 4:
         await callback.answer("Некорректные данные.", show_alert=True)
@@ -724,9 +724,9 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('client_'))
 async def client_selected_callback(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
         
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
@@ -1358,9 +1358,9 @@ async def add_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('home'))
 async def return_home(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
     main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
     main_message_id = user_main_messages.get(admin, {}).get('message_id')
     if main_chat_id and main_message_id:
@@ -1394,9 +1394,9 @@ async def return_home(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('send_config_'))
 async def send_user_config(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
+    '''if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
+        return'''
         
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
