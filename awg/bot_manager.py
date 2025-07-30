@@ -117,6 +117,11 @@ main_menu_markup = InlineKeyboardMarkup(row_width=1).add(
     InlineKeyboardButton("⚙ Управление серверами", callback_data="manage_servers")
 )
 
+user_main_menu_markup = InlineKeyboardMarkup(row_width=1).add(
+    InlineKeyboardButton("➕ Создать конфигурацию", callback_data="add_user"),
+    InlineKeyboardButton("📋 Мои конфигурации", callback_data="list_users")
+)
+
 current_server = None
 
 user_main_messages = {}
@@ -246,15 +251,25 @@ def parse_relative_time(relative_str: str) -> datetime:
 
 @dp.message_handler(commands=['start', 'help'])
 async def help_command_handler(message: types.Message):
+    # Используем is_admin для определения роли
     if is_admin(message):
-        sent_message = await message.answer(f"Выберите действие\nТекущий сервер: *{current_server}*", reply_markup=main_menu_markup, parse_mode='MarkDown')
+        # Админское меню
+        menu = main_menu_markup
+        text = f"Админ-панель\nТекущий сервер: *{current_server}*"
+        # Сохраняем сообщение для админа, чтобы его можно было редактировать
+        sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
         user_main_messages[admin] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
         try:
             await bot.pin_chat_message(chat_id=message.chat.id, message_id=sent_message.message_id, disable_notification=True)
         except:
             pass
     else:
-        await message.answer("У вас нет доступа к этому боту.")
+        # Пользовательское меню
+        menu = user_main_menu_markup
+        text = f"Добро пожаловать!\nТекущий сервер для создания ключей: *{current_server}*"
+        # Сохраняем сообщение для пользователя, чтобы его можно было редактировать
+        sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
+        user_main_messages[message.from_user.id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
 
 @dp.message_handler()
 async def handle_messages(message: types.Message):
@@ -507,29 +522,41 @@ async def handle_messages(message: types.Message):
         asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('add_user'))
-async def prompt_for_user_name(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
-        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
-        
+async def add_user_start(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    
     if not current_server:
-        await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
+        await callback_query.answer("Сервер не выбран, создание конфигурации временно недоступно.", show_alert=True)
         return
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
-    if main_chat_id and main_message_id:
+
+    # Генерируем уникальное имя для клиента
+    # Например: username_1687888999
+    client_name = f"{callback_query.from_user.username or user_id}_{int(datetime.now().timestamp())}"
+    
+    # Сразу переходим к выбору длительности
+    user_main_messages[user_id] = user_main_messages.get(user_id, {})
+    user_main_messages[user_id]['client_name'] = client_name
+    user_main_messages[user_id]['state'] = 'waiting_for_duration'
+    
+    duration_buttons = [
+        InlineKeyboardButton("1 час", callback_data=f"duration_1h_{client_name}_noipv6"),
+        InlineKeyboardButton("1 день", callback_data=f"duration_1d_{client_name}_noipv6"),
+        InlineKeyboardButton("1 неделя", callback_data=f"duration_1w_{client_name}_noipv6"),
+        InlineKeyboardButton("1 месяц", callback_data=f"duration_1m_{client_name}_noipv6"),
+        InlineKeyboardButton("Без ограничений", callback_data=f"duration_unlimited_{client_name}_noipv6"),
+        InlineKeyboardButton("Домой", callback_data="home")
+    ]
+    duration_markup = InlineKeyboardMarkup(row_width=1).add(*duration_buttons)
+
+    main_message = user_main_messages.get(user_id)
+    if main_message:
         await bot.edit_message_text(
-            chat_id=main_chat_id,
-            message_id=main_message_id,
-            text=f"Введите имя пользователя для добавления\nТекущий сервер: *{current_server}*",
-            reply_markup=InlineKeyboardMarkup().add(
-                InlineKeyboardButton("Домой", callback_data="home")
-                                                   ),
-            parse_mode='MarkDown'
+            chat_id=main_message['chat_id'],
+            message_id=main_message['message_id'],
+            text=f"Выберите время действия для новой конфигурации:",
+            parse_mode="Markdown",
+            reply_markup=duration_markup
         )
-        user_main_messages[admin]['state'] = 'waiting_for_user_name'
-    else:
-        await callback_query.answer("Ошибка: главное сообщение не найдено.", show_alert=True)
     await callback_query.answer()
 
 def parse_traffic_limit(traffic_limit: str) -> int:
@@ -610,7 +637,7 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
         duration = None
     if duration:
         expiration_time = datetime.now(pytz.UTC) + duration
-        db.set_user_expiration(client_name, expiration_time, traffic_limit, server_id=current_server)
+        db.set_user_expiration(client_name, expiration_time, traffic_limit, owner_id=callback_query.from_user.id, server_id=current_server)
         scheduler.add_job(
             deactivate_user,
             trigger=DateTrigger(run_date=expiration_time),
@@ -619,7 +646,7 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
         )
         confirmation_text = f"Пользователь **{client_name}** добавлен. \nКонфигурация истечет через **{duration_choice}**."
     else:
-        db.set_user_expiration(client_name, None, traffic_limit, server_id=current_server)
+        db.set_user_expiration(client_name, None, traffic_limit, owner_id=callback_query.from_user.id, server_id=current_server)
         confirmation_text = f"Пользователь **{client_name}** добавлен с неограниченным временем действия."
     if traffic_limit != "Неограниченно":
         confirmation_text += f"\nЛимит трафика: **{traffic_limit}**."
@@ -712,6 +739,14 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     if not client_info:
         await callback_query.answer("Ошибка: пользователь не найден.", show_alert=True)
         return
+
+    # Проверка владельца для не-админов
+    if not is_admin(callback_query):
+        expirations = db.load_expirations()
+        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+        if owner_id != callback_query.from_user.id:
+            await callback_query.answer("У вас нет доступа к этой конфигурации.", show_alert=True)
+            return
 
     expiration_time = db.get_user_expiration(username, server_id=current_server)
     traffic_limit = db.get_user_traffic_limit(username, server_id=current_server)
@@ -850,17 +885,22 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('list_users'))
 async def list_users_callback(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
-        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
-        
+    user_id = callback_query.from_user.id
+    
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
+    
+    # Проверяем, админ ли пользователь
+    if is_admin(callback_query):
+        clients = db.get_client_list(server_id=current_server)
+        text_header = f"Все пользователи\nТекущий сервер: *{current_server}*"
+    else:
+        clients = db.get_clients_by_owner(owner_id=user_id, server_id=current_server)
+        text_header = f"Мои конфигурации\nТекущий сервер: *{current_server}*"
 
-    clients = db.get_client_list(server_id=current_server)
     if not clients:
-        await callback_query.answer("Список пользователей пуст.", show_alert=True)
+        await callback_query.answer("Список конфигураций пуст.", show_alert=True)
         return
 
     active_clients = db.get_active_list(server_id=current_server)
@@ -879,7 +919,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     now = datetime.now(pytz.UTC)
 
     for client in clients:
-        username = client[0]  
+        username = client[0]
         last_handshake_str = active_clients_dict.get(username)
         if last_handshake_str and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
             try:
@@ -906,15 +946,15 @@ async def list_users_callback(callback_query: types.CallbackQuery):
 
     keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
 
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
+    main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+    main_message_id = user_main_messages.get(user_id, {}).get('message_id')
 
     if main_chat_id and main_message_id:
         try:
             await bot.edit_message_text(
                 chat_id=main_chat_id,
                 message_id=main_message_id,
-                text=f"Выберите пользователя\nТекущий сервер: *{current_server}*",
+                text=text_header,
                 reply_markup=keyboard,
                 parse_mode='MarkDown'
             )
@@ -923,11 +963,11 @@ async def list_users_callback(callback_query: types.CallbackQuery):
             await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
     else:
         sent_message = await callback_query.message.reply(
-            f"Выберите пользователя\nТекущий сервер: *{current_server}*",
+            text_header,
             reply_markup=keyboard,
             parse_mode='MarkDown'
         )
-        user_main_messages[admin] = {
+        user_main_messages[user_id] = {
             'chat_id': sent_message.chat.id,
             'message_id': sent_message.message_id
         }
