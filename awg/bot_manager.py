@@ -580,7 +580,7 @@ def format_vpn_key(vpn_key, num_lines=8):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('traffic_limit_'))
 async def set_traffic_limit(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     parts = callback_query.data.split('_', 3)
@@ -697,7 +697,7 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('client_'))
 async def client_selected_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -850,7 +850,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('list_users'))
 async def list_users_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -944,7 +944,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('connections_'))
 async def client_connections_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -1015,7 +1015,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
         
 @dp.callback_query_handler(lambda c: c.data.startswith('ip_info_'))
 async def ip_info_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -1079,7 +1079,7 @@ async def ip_info_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('confirm_delete_user_'))
 async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1101,7 +1101,7 @@ async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('delete_user_'))
 async def client_delete_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -1150,7 +1150,7 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data == 'manage_servers')
 async def manage_servers_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1178,7 +1178,7 @@ async def manage_servers_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('select_server_'))
 async def select_server_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1192,7 +1192,7 @@ async def select_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data in ['auth_password', 'auth_key'])
 async def auth_type_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1225,7 +1225,7 @@ async def auth_type_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data == 'delete_server')
 async def delete_server_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1251,7 +1251,7 @@ async def delete_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('confirm_delete_server_'))
 async def confirm_delete_server_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1273,7 +1273,7 @@ async def confirm_delete_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('delete_server_confirmed_'))
 async def delete_server_confirmed_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1293,7 +1293,7 @@ async def delete_server_confirmed_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data == 'add_server')
 async def add_server_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     
@@ -1318,7 +1318,7 @@ async def add_server_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('home'))
 async def return_home(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
     main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
@@ -1354,7 +1354,7 @@ async def return_home(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('send_config_'))
 async def send_user_config(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
@@ -1538,7 +1538,7 @@ async def send_user_config(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('create_backup'))
 async def create_backup_callback(callback_query: types.CallbackQuery):
-    if callback_query.from_user.id != admin:
+    if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
