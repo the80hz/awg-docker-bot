@@ -586,6 +586,8 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
         
     _, username = callback_query.data.split('client_', 1)
     username = username.strip()
+    # Сохраняем оригинальное имя для callback_data
+    original_username = username
     clients = db.get_client_list(server_id=current_server)
     client_info = next((c for c in clients if c[0] == username), None)
     if not client_info:
@@ -687,9 +689,10 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     else:
         show_last_handshake = "❗Нет данных❗"
 
-    username = username.replace('_', ' ')
+    # Создаем отдельную переменную для отображения имени (с пробелами вместо подчёркиваний)
+    display_username = username.replace('_', ' ')
     text = (
-        f"📧 _Имя:_ {username}\n"
+        f"📧 _Имя:_ {display_username}\n"
         f"🌐 _Внутренний IPv4:_ {ipv4_address}\n"
         f"🌐 _Статус соединения:_ {status}\n"
         f"⏳ _Последнее 🤝:_ {show_last_handshake}\n"
@@ -705,18 +708,18 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     # Для админов показываем все кнопки
     if is_admin(callback_query):
         keyboard.add(
-            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{username}"),
-            InlineKeyboardButton("Подключения", callback_data=f"connections_{username}"),
-            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}")
+            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{original_username}"),
+            InlineKeyboardButton("Подключения", callback_data=f"connections_{original_username}"),
+            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}")
         )
         keyboard.add(
-            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
+            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}")
         )
     else:
         # Для обычных пользователей показываем только основные функции
         keyboard.add(
-            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}"),
-            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
+            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}"),
+            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}")
         )
     
     keyboard.add(
@@ -880,6 +883,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
         
     _, username = callback_query.data.split('connections_', 1)
     username = username.strip()
+    original_username = username
     file_path = os.path.join('files', 'connections', f'{username}_ip.json')
     
     os.makedirs(os.path.join('files', 'connections'), exist_ok=True)
@@ -930,7 +934,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
                 
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
-            InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{username}"),
+            InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{original_username}"),
             InlineKeyboardButton("Домой", callback_data="home"))
 
         await callback_query.message.edit_text(text, reply_markup=keyboard)
@@ -952,6 +956,7 @@ async def ip_info_callback(callback_query: types.CallbackQuery):
         
     _, username = callback_query.data.split('ip_info_', 1)
     username = username.strip()
+    original_username = username
     active_clients = db.get_active_list(server_id=current_server)
     active_info = next((ac for ac in active_clients if ac.get('name') == username), None)
     if active_info:
@@ -981,7 +986,7 @@ async def ip_info_callback(callback_query: types.CallbackQuery):
         info_text += f"{key.capitalize()}: {value}\n"
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{username}"),
+        InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{original_username}"),
         InlineKeyboardButton("Домой", callback_data="home")
     )
     user_id = callback_query.from_user.id
@@ -1317,6 +1322,7 @@ async def send_user_config(callback_query: types.CallbackQuery):
         return
     _, username = callback_query.data.split('send_config_', 1)
     username = username.strip()
+    original_username = username
 
     if not is_admin(callback_query):
         expirations = db.load_expirations()
@@ -1475,12 +1481,12 @@ async def send_user_config(callback_query: types.CallbackQuery):
     if client_info:
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
-            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{username}"),
-            InlineKeyboardButton("Подключения", callback_data=f"connections_{username}"),
-            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}")
+            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{original_username}"),
+            InlineKeyboardButton("Подключения", callback_data=f"connections_{original_username}"),
+            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}")
         )
         keyboard.add(
-            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
+            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}")
         )
         keyboard.add(
             InlineKeyboardButton("⬅️ Назад", callback_data="list_users"),
