@@ -1122,7 +1122,7 @@ def save_expirations(expirations):
     with open(EXPIRATIONS_FILE, 'w') as f:
         json.dump(data, f)
 
-def set_user_expiration(username: str, expiration: datetime, traffic_limit: str, owner_id: int, server_id: str = None):
+def set_user_expiration(username: str, expiration = None, traffic_limit = "Неограниченно", owner_id = None, server_id = None):
     if server_id is None:
         return
     expirations = load_expirations()

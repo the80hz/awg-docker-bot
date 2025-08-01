@@ -129,8 +129,6 @@ isp_cache = {}
 ISP_CACHE_FILE = 'files/isp_cache.json'
 CACHE_TTL = timedelta(hours=24)
 
-TRAFFIC_LIMITS = ["5 GB", "10 GB", "30 GB", "100 GB", "Неограниченно"]
-
 def get_interface_name():
     return os.path.basename(WG_CONFIG_FILE).split('.')[0]
 
@@ -504,127 +502,12 @@ async def add_user_start(callback_query: types.CallbackQuery):
     # Например: username_1687888999
     client_name = f"{callback_query.from_user.username or user_id}_{int(datetime.now().timestamp())}"
     
-    # Сразу переходим к выбору длительности
-    user_main_messages[user_id] = user_main_messages.get(user_id, {})
-    user_main_messages[user_id]['client_name'] = client_name
-    user_main_messages[user_id]['state'] = 'waiting_for_duration'
+    # Сразу создаем профиль без выбора длительности и трафика
+    # Сохраняем информацию о владельце профиля
+    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=callback_query.from_user.id, server_id=current_server)
     
-    duration_buttons = [
-        InlineKeyboardButton("1 час", callback_data=f"duration_1h_{client_name}_noipv6"),
-        InlineKeyboardButton("1 день", callback_data=f"duration_1d_{client_name}_noipv6"),
-        InlineKeyboardButton("1 неделя", callback_data=f"duration_1w_{client_name}_noipv6"),
-        InlineKeyboardButton("1 месяц", callback_data=f"duration_1m_{client_name}_noipv6"),
-        InlineKeyboardButton("Без ограничений", callback_data=f"duration_unlimited_{client_name}_noipv6"),
-        InlineKeyboardButton("Домой", callback_data="home")
-    ]
-    duration_markup = InlineKeyboardMarkup(row_width=1).add(*duration_buttons)
-
-    main_message = user_main_messages.get(user_id)
-    if main_message:
-        await bot.edit_message_text(
-            chat_id=main_message['chat_id'],
-            message_id=main_message['message_id'],
-            text=f"Выберите время действия для новой конфигурации:",
-            parse_mode="Markdown",
-            reply_markup=duration_markup
-        )
-    await callback_query.answer()
-
-def parse_traffic_limit(traffic_limit: str) -> int:
-    mapping = {'B':1, 'KB':10**3, 'MB':10**6, 'GB':10**9, 'TB':10**12}
-    match = re.match(r'^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$', traffic_limit, re.IGNORECASE)
-    if match:
-        value = float(match.group(1))
-        unit = match.group(2).upper()
-        return int(value * mapping.get(unit, 1))
-    else:
-        return None
-
-@dp.callback_query_handler(lambda c: c.data.startswith('duration_'))
-async def set_config_duration(callback: types.CallbackQuery):
-    '''if not is_admin(callback):
-        await callback.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
-    parts = callback.data.split('_')
-    if len(parts) < 4:
-        await callback.answer("Некорректные данные.", show_alert=True)
-        return
-    duration_choice = parts[1]
-    client_name = parts[2]
-    ipv6_flag = parts[3]
-    user_id = callback.from_user.id
-    user_main_messages[user_id]['duration_choice'] = duration_choice
-    user_main_messages[user_id]['state'] = 'waiting_for_traffic_limit'
-    traffic_buttons = [
-        InlineKeyboardButton(limit, callback_data=f"traffic_limit_{limit}_{client_name}")
-        for limit in TRAFFIC_LIMITS
-    ]
-    traffic_markup = InlineKeyboardMarkup(row_width=1).add(*traffic_buttons)
-    await bot.edit_message_text(
-        chat_id=callback.message.chat.id,
-        message_id=callback.message.message_id,
-        text=f"Выберите лимит трафика для пользователя **{client_name}**:",
-        parse_mode="Markdown",
-        reply_markup=traffic_markup
-    )
-    await callback.answer()
-
-def format_vpn_key(vpn_key, num_lines=8):
-    line_length = len(vpn_key) // num_lines
-    if len(vpn_key) % num_lines != 0:
-        line_length += 1
-    lines = [vpn_key[i:i+line_length] for i in range(0, len(vpn_key), line_length)]
-    formatted_key = '\n'.join(lines)
-    return formatted_key
-
-@dp.callback_query_handler(lambda c: c.data.startswith('traffic_limit_'))
-async def set_traffic_limit(callback_query: types.CallbackQuery):
-    '''if not is_admin(callback_query):
-        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return'''
-    user_id = callback_query.from_user.id
-    parts = callback_query.data.split('_', 3)
-    if len(parts) < 4:
-        await callback_query.answer("Некорректные данные.", show_alert=True)
-        return
-    traffic_limit = parts[2]
-    client_name = parts[3]
-    traffic_bytes = parse_traffic_limit(traffic_limit)
-    if traffic_limit != "Неограниченно" and traffic_bytes is None:
-        await callback_query.answer("Некорректный формат лимита трафика.", show_alert=True)
-        return
-    user_main_messages[user_id]['traffic_limit'] = traffic_limit
-    user_main_messages[user_id]['state'] = None
-    duration_choice = user_main_messages.get(user_id, {}).get('duration_choice')
-    if duration_choice == '1h':
-        duration = timedelta(hours=1)
-    elif duration_choice == '1d':
-        duration = timedelta(days=1)
-    elif duration_choice == '1w':
-        duration = timedelta(weeks=1)
-    elif duration_choice == '1m':
-        duration = timedelta(days=30)
-    elif duration_choice == 'unlimited':
-        duration = None
-    else:
-        duration = None
-    if duration:
-        expiration_time = datetime.now(pytz.UTC) + duration
-        db.set_user_expiration(client_name, expiration_time, traffic_limit, owner_id=callback_query.from_user.id, server_id=current_server)
-        scheduler.add_job(
-            deactivate_user,
-            trigger=DateTrigger(run_date=expiration_time),
-            args=[client_name],
-            id=client_name
-        )
-        confirmation_text = f"Пользователь **{client_name}** добавлен. \nКонфигурация истечет через **{duration_choice}**."
-    else:
-        db.set_user_expiration(client_name, None, traffic_limit, owner_id=callback_query.from_user.id, server_id=current_server)
-        confirmation_text = f"Пользователь **{client_name}** добавлен с неограниченным временем действия."
-    if traffic_limit != "Неограниченно":
-        confirmation_text += f"\nЛимит трафика: **{traffic_limit}**."
-    else:
-        confirmation_text += f"\nЛимит трафика: **♾️ Неограниченно**."
+    confirmation_text = f"Пользователь **{client_name}** добавлен."
+    
     success = db.root_add(client_name, server_id=current_server, ipv6=False)
     if success:
         try:
@@ -648,55 +531,45 @@ async def set_traffic_limit(callback_query: types.CallbackQuery):
                         user_id,
                         config,
                         caption=caption,
-                        parse_mode="Markdown",
-                        disable_notification=True
+                        parse_mode="Markdown"
                     )
-                    asyncio.create_task(delete_message_after_delay(user_id, sent_doc.message_id, delay=15))
-        except FileNotFoundError:
-            confirmation_text = "Не удалось найти файлы конфигурации для указанного пользователя."
-            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
-            await callback_query.answer()
-            return
+                    asyncio.create_task(delete_message_after_delay(user_id, sent_doc.message_id, delay=300))
         except Exception as e:
             logger.error(f"Ошибка при отправке конфигурации: {e}")
-            confirmation_text = "Произошла ошибка."
-            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
-            await callback_query.answer()
-            return
-        sent_confirmation = await bot.send_message(
-            chat_id=user_id,
-            text=confirmation_text,
-            parse_mode="Markdown",
-            disable_notification=True
-        )
-        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
+            confirmation_text += f"\n⚠️ Ошибка при генерации файла конфигурации."
     else:
-        confirmation_text = "Не удалось добавить пользователя."
-        sent_confirmation = await bot.send_message(
-            chat_id=user_id,
-            text=confirmation_text,
-            parse_mode="Markdown",
-            disable_notification=True
-        )
-        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
+        confirmation_text = f"❌ Ошибка при создании пользователя **{client_name}**."
+
     main_message = user_main_messages.get(user_id)
     if main_message:
-        # Определяем, какое меню показать
-        menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
-        text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
-        
         await bot.edit_message_text(
             chat_id=main_message['chat_id'],
             message_id=main_message['message_id'],
-            text=text_to_show,
-            reply_markup=menu_to_show,
-            parse_mode='MarkDown'
+            text=confirmation_text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("Домой", callback_data="home")
+            )
         )
-    else:
-        await callback_query.answer("Выберите действие:", show_alert=True)
     await callback_query.answer()
+
+def parse_traffic_limit(traffic_limit: str) -> int:
+    mapping = {'B':1, 'KB':10**3, 'MB':10**6, 'GB':10**9, 'TB':10**12}
+    match = re.match(r'^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$', traffic_limit, re.IGNORECASE)
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2).upper()
+        return int(value * mapping.get(unit, 1))
+    else:
+        return None
+
+def format_vpn_key(vpn_key, num_lines=8):
+    line_length = len(vpn_key) // num_lines
+    if len(vpn_key) % num_lines != 0:
+        line_length += 1
+    lines = [vpn_key[i:i+line_length] for i in range(0, len(vpn_key), line_length)]
+    formatted_key = '\n'.join(lines)
+    return formatted_key
 
 @dp.callback_query_handler(lambda c: c.data.startswith('client_'))
 async def client_selected_callback(callback_query: types.CallbackQuery):
@@ -825,14 +698,24 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     )
 
     keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{username}"),
-        InlineKeyboardButton("Подключения", callback_data=f"connections_{username}"),
-        InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}")
-    )
-    keyboard.add(
-        InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
-    )
+    
+    # Для админов показываем все кнопки
+    if is_admin(callback_query):
+        keyboard.add(
+            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{username}"),
+            InlineKeyboardButton("Подключения", callback_data=f"connections_{username}"),
+            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}")
+        )
+        keyboard.add(
+            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
+        )
+    else:
+        # Для обычных пользователей показываем только основные функции
+        keyboard.add(
+            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{username}"),
+            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{username}")
+        )
+    
     keyboard.add(
         InlineKeyboardButton("⬅️ Назад", callback_data="list_users"),
         InlineKeyboardButton("Домой", callback_data="home")
@@ -895,9 +778,14 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup(row_width=2)
     now = datetime.now(pytz.UTC)
 
+    # Загружаем информацию о владельцах для админов
+    expirations = db.load_expirations() if is_admin(callback_query) else {}
+
     for client in clients:
         username = client[0]
         last_handshake_str = active_clients_dict.get(username)
+        
+        # Определяем статус подключения
         if last_handshake_str and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
             try:
                 last_handshake_dt = parse_relative_time(last_handshake_str)
@@ -905,19 +793,36 @@ async def list_users_callback(callback_query: types.CallbackQuery):
                     delta = now - last_handshake_dt
                     delta_days = delta.days
                     if delta_days <= 5:
-                        status_display = f"💻({delta_days}d) {username}"
+                        status_icon = "💻"
                     else:
-                        status_display = f"❌({delta_days}d) {username}"
+                        status_icon = "❌"
+                    status_display = f"{status_icon}({delta_days}d)"
                 else:
-                    status_display = f"🚫(?d) {username}"
+                    status_display = f"🚫(?d)"
             except ValueError:
                 logger.error(f"Некорректный формат даты для пользователя {username}: {last_handshake_str}")
-                status_display = f"🚫(?d) {username}"
+                status_display = f"🚫(?d)"
         else:
-            status_display = f"🚫(?d) {username}"
+            status_display = f"🚫(?d)"
+
+        # Для админов показываем владельца профиля
+        if is_admin(callback_query):
+            owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+            if owner_id:
+                try:
+                    # Пытаемся получить информацию о пользователе (это может быть username)
+                    owner_info = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
+                except:
+                    owner_info = f"ID:{owner_id}"
+            else:
+                owner_info = "Unknown"
+            
+            button_text = f"{status_display} {username} ({owner_info})"
+        else:
+            button_text = f"{status_display} {username}"
 
         keyboard.insert(InlineKeyboardButton(
-            status_display,
+            button_text,
             callback_data=f"client_{username}"
         ))
 
@@ -961,6 +866,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('connections_'))
 async def client_connections_callback(callback_query: types.CallbackQuery):
+    # Проверяем права доступа - эта функция доступна только админам
     if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
@@ -1032,6 +938,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
         
 @dp.callback_query_handler(lambda c: c.data.startswith('ip_info_'))
 async def ip_info_callback(callback_query: types.CallbackQuery):
+    # Проверяем права доступа - эта функция доступна только админам
     if not is_admin(callback_query):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
@@ -1096,11 +1003,16 @@ async def ip_info_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('confirm_delete_user_'))
 async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
-        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
-    
     username = callback_query.data.split('confirm_delete_user_')[1]
+    
+    # Проверка владельца для не-админов
+    if not is_admin(callback_query):
+        expirations = db.load_expirations()
+        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+        if owner_id != callback_query.from_user.id:
+            await callback_query.answer("У вас нет прав для удаления этой конфигурации.", show_alert=True)
+            return
+    
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("✅ Да, удалить", callback_data=f"delete_user_{username}"),
@@ -1118,15 +1030,19 @@ async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('delete_user_'))
 async def client_delete_callback(callback_query: types.CallbackQuery):
-    if not is_admin(callback_query):
-        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
-        return
-        
     if not current_server:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
         
     username = callback_query.data.split('delete_user_')[1]
+    
+    # Проверка владельца для не-админов
+    if not is_admin(callback_query):
+        expirations = db.load_expirations()
+        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+        if owner_id != callback_query.from_user.id:
+            await callback_query.answer("У вас нет прав для удаления этой конфигурации.", show_alert=True)
+            return
     success = db.deactive_user_db(username, server_id=current_server)
     if success:
         db.remove_user_expiration(username, server_id=current_server)
