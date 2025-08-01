@@ -508,7 +508,7 @@ async def add_user_start(callback_query: types.CallbackQuery):
     # Сохраняем информацию о владельце профиля
     db.set_user_expiration(client_name, None, "Неограниченно", owner_id=callback_query.from_user.id, server_id=current_server)
     
-    confirmation_text = f"Пользователь **{client_name}** добавлен."
+    confirmation_text = f"Пользователь *{client_name}* добавлен."
     
     success = db.root_add(client_name, server_id=current_server, ipv6=False)
     if success:
@@ -541,7 +541,7 @@ async def add_user_start(callback_query: types.CallbackQuery):
             logger.error(f"Ошибка при отправке конфигурации: {e}")
             confirmation_text += f"\n⚠️ Ошибка при генерации файла конфигурации."
     else:
-        confirmation_text = f"❌ Ошибка при создании пользователя **{client_name}**."
+        confirmation_text = f"❌ Ошибка при создании пользователя *{client_name}*."
 
     main_message = user_main_messages.get(user_id)
     if main_message:
@@ -1072,9 +1072,9 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
                 os.remove(connections_file)
         except Exception as e:
             logger.error(f"Ошибка при удалении файла подключений для пользователя {username}: {e}")
-        confirmation_text = f"Пользователь **{username}** успешно удален."
+        confirmation_text = f"Пользователь *{username}* успешно удален."
     else:
-        confirmation_text = f"Не удалось удалить пользователя **{username}**."
+        confirmation_text = f"Не удалось удалить пользователя *{username}*."
     
     user_id = callback_query.from_user.id
     main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
@@ -1374,7 +1374,7 @@ async def send_user_config(callback_query: types.CallbackQuery):
                 )
                 sent_messages.append(sent_doc.message_id)
         else:
-            confirmation_text = f"Не удалось создать конфигурацию для пользователя **{username}**."
+            confirmation_text = f"Не удалось создать конфигурацию для пользователя *{username}*."
             sent_message = await bot.send_message(callback_query.message.chat.id, confirmation_text, parse_mode="Markdown", disable_notification=True)
             asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_message.message_id, delay=15))
             await callback_query.answer()
@@ -1386,13 +1386,13 @@ async def send_user_config(callback_query: types.CallbackQuery):
         await callback_query.answer()
         return
     if not sent_messages:
-        confirmation_text = f"Не удалось найти файлы конфигурации для пользователя **{username}**."
+        confirmation_text = f"Не удалось найти файлы конфигурации для пользователя *{username}*."
         sent_message = await bot.send_message(callback_query.message.chat.id, confirmation_text, parse_mode="Markdown", disable_notification=True)
         asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_message.message_id, delay=15))
         await callback_query.answer()
         return
     else:
-        confirmation_text = f"Конфигурация для **{username}** отправлена."
+        confirmation_text = f"Конфигурация для *{username}* отправлена."
         sent_confirmation = await bot.send_message(
             chat_id=callback_query.message.chat.id,
             text=confirmation_text,
@@ -1712,11 +1712,11 @@ async def deactivate_user(client_name: str):
                 os.remove(connections_file)
         except Exception as e:
             logger.error(f"Ошибка при удалении файла подключений для пользователя {client_name}: {e}")
-        confirmation_text = f"Конфигурация пользователя **{client_name}** была деактивирована из-за превышения лимита трафика."
+        confirmation_text = f"Конфигурация пользователя *{client_name}* была деактивирована из-за превышения лимита трафика."
         sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
         asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
     else:
-        sent_message = await bot.send_message(admin, f"Не удалось деактивировать пользователя **{client_name}**.", parse_mode="Markdown", disable_notification=True)
+        sent_message = await bot.send_message(admin, f"Не удалось деактивировать пользователя *{client_name}*.", parse_mode="Markdown", disable_notification=True)
         asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
 
 async def check_environment():
