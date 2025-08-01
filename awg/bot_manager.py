@@ -1080,14 +1080,27 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
     main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
     main_message_id = user_main_messages.get(user_id, {}).get('message_id')
     
-    # Определяем правильное меню для пользователя
+    # Определяем правильное меню и текст для пользователя
     menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+    home_text = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
     
     if main_chat_id and main_message_id:
+        # Сначала показываем подтверждение удаления
         await bot.edit_message_text(
             chat_id=main_chat_id,
             message_id=main_message_id,
             text=confirmation_text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("🏠 Домой", callback_data="home")
+            )
+        )
+        # Через небольшую задержку показываем домашний экран
+        await asyncio.sleep(2)
+        await bot.edit_message_text(
+            chat_id=main_chat_id,
+            message_id=main_message_id,
+            text=home_text,
             parse_mode="Markdown",
             reply_markup=menu_to_show
         )
