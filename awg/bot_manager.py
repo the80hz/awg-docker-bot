@@ -276,13 +276,14 @@ async def handle_messages(message: types.Message):
         await message.answer("У вас нет доступа к этому боту.")
         return
     
-    user_state = user_main_messages.get(admin, {}).get('state')
+    user_id = message.from_user.id
+    user_state = user_main_messages.get(user_id, {}).get('state')
     
     if user_state == 'waiting_for_server_id':
         server_id = message.text.strip()
         if not all(c.isalnum() or c in "-_" for c in server_id):
-            main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-            main_message_id = user_main_messages.get(admin, {}).get('message_id')
+            main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+            main_message_id = user_main_messages.get(user_id, {}).get('message_id')
             if main_chat_id and main_message_id:
                 await bot.edit_message_text(
                     chat_id=main_chat_id,
@@ -295,11 +296,11 @@ async def handle_messages(message: types.Message):
             asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
             return
         
-        user_main_messages[admin]['server_id'] = server_id
-        user_main_messages[admin]['state'] = 'waiting_for_server_host'
+        user_main_messages[user_id]['server_id'] = server_id
+        user_main_messages[user_id]['state'] = 'waiting_for_server_host'
         
-        main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-        main_message_id = user_main_messages.get(admin, {}).get('message_id')
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
         if main_chat_id and main_message_id:
             await bot.edit_message_text(
                 chat_id=main_chat_id,
@@ -313,11 +314,11 @@ async def handle_messages(message: types.Message):
         
     elif user_state == 'waiting_for_server_host':
         host = message.text.strip()
-        user_main_messages[admin]['host'] = host
-        user_main_messages[admin]['state'] = 'waiting_for_server_port'
+        user_main_messages[user_id]['host'] = host
+        user_main_messages[user_id]['state'] = 'waiting_for_server_port'
         
-        main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-        main_message_id = user_main_messages.get(admin, {}).get('message_id')
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
         if main_chat_id and main_message_id:
             await bot.edit_message_text(
                 chat_id=main_chat_id,
@@ -332,11 +333,11 @@ async def handle_messages(message: types.Message):
     elif user_state == 'waiting_for_server_port':
         try:
             port = int(message.text.strip() or "22")
-            user_main_messages[admin]['port'] = port
-            user_main_messages[admin]['state'] = 'waiting_for_server_username'
+            user_main_messages[user_id]['port'] = port
+            user_main_messages[user_id]['state'] = 'waiting_for_server_username'
             
-            main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-            main_message_id = user_main_messages.get(admin, {}).get('message_id')
+            main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+            main_message_id = user_main_messages.get(user_id, {}).get('message_id')
             if main_chat_id and main_message_id:
                 await bot.edit_message_text(
                     chat_id=main_chat_id,
@@ -348,8 +349,8 @@ async def handle_messages(message: types.Message):
                 )
             asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
         except ValueError:
-            main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-            main_message_id = user_main_messages.get(admin, {}).get('message_id')
+            main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+            main_message_id = user_main_messages.get(user_id, {}).get('message_id')
             if main_chat_id and main_message_id:
                 await bot.edit_message_text(
                     chat_id=main_chat_id,
@@ -363,8 +364,8 @@ async def handle_messages(message: types.Message):
             
     elif user_state == 'waiting_for_server_username':
         username = message.text.strip()
-        user_main_messages[admin]['username'] = username
-        user_main_messages[admin]['state'] = 'waiting_for_auth_type'
+        user_main_messages[user_id]['username'] = username
+        user_main_messages[user_id]['state'] = 'waiting_for_auth_type'
         
         auth_markup = InlineKeyboardMarkup(row_width=2)
         auth_markup.add(
@@ -372,8 +373,8 @@ async def handle_messages(message: types.Message):
             InlineKeyboardButton("SSH ключ", callback_data="auth_key")
         )
         
-        main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-        main_message_id = user_main_messages.get(admin, {}).get('message_id')
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
         if main_chat_id and main_message_id:
             await bot.edit_message_text(
                 chat_id=main_chat_id,
@@ -385,7 +386,7 @@ async def handle_messages(message: types.Message):
         
     elif user_state == 'waiting_for_password':
         password = message.text.strip()
-        server_data = user_main_messages[admin]
+        server_data = user_main_messages[user_id]
         
         success = db.add_server(
             server_data['server_id'],
@@ -396,8 +397,8 @@ async def handle_messages(message: types.Message):
             password=password
         )
         
-        main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-        main_message_id = user_main_messages.get(admin, {}).get('message_id')
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
         
         if success:
             if main_chat_id and main_message_id:
@@ -437,7 +438,7 @@ async def handle_messages(message: types.Message):
             
     elif user_state == 'waiting_for_key_path':
         key_path = message.text.strip()
-        server_data = user_main_messages[admin]
+        server_data = user_main_messages[user_id]
         
         success = db.add_server(
             server_data['server_id'],
@@ -448,8 +449,8 @@ async def handle_messages(message: types.Message):
             key_path=key_path
         )
         
-        main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-        main_message_id = user_main_messages.get(admin, {}).get('message_id')
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
         
         if success:
             if main_chat_id and main_message_id:
@@ -983,8 +984,9 @@ async def ip_info_callback(callback_query: types.CallbackQuery):
         InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{username}"),
         InlineKeyboardButton("Домой", callback_data="home")
     )
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
+    user_id = callback_query.from_user.id
+    main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+    main_message_id = user_main_messages.get(user_id, {}).get('message_id')
     if main_chat_id and main_message_id:
         try:
             await bot.edit_message_text(
@@ -1068,15 +1070,21 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
         confirmation_text = f"Пользователь **{username}** успешно удален."
     else:
         confirmation_text = f"Не удалось удалить пользователя **{username}**."
-    main_chat_id = user_main_messages.get(admin, {}).get('chat_id')
-    main_message_id = user_main_messages.get(admin, {}).get('message_id')
+    
+    user_id = callback_query.from_user.id
+    main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+    main_message_id = user_main_messages.get(user_id, {}).get('message_id')
+    
+    # Определяем правильное меню для пользователя
+    menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+    
     if main_chat_id and main_message_id:
         await bot.edit_message_text(
             chat_id=main_chat_id,
             message_id=main_message_id,
             text=confirmation_text,
             parse_mode="Markdown",
-            reply_markup=main_menu_markup
+            reply_markup=menu_to_show
         )
     else:
         await callback_query.answer("Ошибка: главное сообщение не найдено.", show_alert=True)
