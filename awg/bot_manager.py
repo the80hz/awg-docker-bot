@@ -271,7 +271,8 @@ async def help_command_handler(message: types.Message):
 
 @dp.message_handler()
 async def handle_messages(message: types.Message):
-    if message.chat.id != admin:
+    # Проверяем, есть ли доступ у пользователя/чата
+    if not is_admin(message):
         await message.answer("У вас нет доступа к этому боту.")
         return
     
@@ -527,13 +528,14 @@ async def add_user_start(callback_query: types.CallbackQuery):
                 caption = "VPN ключ не был сгенерирован."
             if os.path.exists(conf_path):
                 with open(conf_path, 'rb') as config:
+                    # Отправляем в тот же чат, где была нажата кнопка
                     sent_doc = await bot.send_document(
-                        user_id,
+                        callback_query.message.chat.id,
                         config,
                         caption=caption,
                         parse_mode="Markdown"
                     )
-                    asyncio.create_task(delete_message_after_delay(user_id, sent_doc.message_id, delay=300))
+                    asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_doc.message_id, delay=300))
         except Exception as e:
             logger.error(f"Ошибка при отправке конфигурации: {e}")
             confirmation_text += f"\n⚠️ Ошибка при генерации файла конфигурации."
@@ -1275,15 +1277,20 @@ async def return_home(callback_query: types.CallbackQuery):
                 parse_mode='MarkDown'
             )
         except:
-            sent_message = await callback_query.message.reply(f"Выберите действие\nТекущий сервер: *{current_server}*", reply_markup=main_menu_markup)
-            user_main_messages[admin] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
+            # Определяем правильное меню для пользователя
+            menu_to_use = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+            sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
+            user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
             try:
                 await bot.pin_chat_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id, disable_notification=True)
             except:
                 pass
     else:
-        sent_message = await callback_query.message.reply(f"Выберите действие\nТекущий сервер: *{current_server}*", reply_markup=main_menu_markup)
-        user_main_messages[admin] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
+        # Определяем правильное меню для пользователя
+        menu_to_use = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+        text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
+        sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
+        user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
         try:
             await bot.pin_chat_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id, disable_notification=True)
         except:
@@ -1330,8 +1337,9 @@ async def send_user_config(callback_query: types.CallbackQuery):
             else:
                 caption = "VPN ключ не был сгенерирован."
             with open(conf_path, 'rb') as config:
+                # Отправляем в тот же чат, где была нажата кнопка
                 sent_doc = await bot.send_document(
-                    user_id,
+                    callback_query.message.chat.id,
                     config,
                     caption=caption,
                     parse_mode="Markdown",
@@ -1340,33 +1348,33 @@ async def send_user_config(callback_query: types.CallbackQuery):
                 sent_messages.append(sent_doc.message_id)
         else:
             confirmation_text = f"Не удалось создать конфигурацию для пользователя **{username}**."
-            sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
-            asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
+            sent_message = await bot.send_message(callback_query.message.chat.id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+            asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_message.message_id, delay=15))
             await callback_query.answer()
             return
     except Exception as e:
         confirmation_text = f"Произошла ошибка: {e}"
-        sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
-        asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
+        sent_message = await bot.send_message(callback_query.message.chat.id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+        asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_message.message_id, delay=15))
         await callback_query.answer()
         return
     if not sent_messages:
         confirmation_text = f"Не удалось найти файлы конфигурации для пользователя **{username}**."
-        sent_message = await bot.send_message(user_id, confirmation_text, parse_mode="Markdown", disable_notification=True)
-        asyncio.create_task(delete_message_after_delay(user_id, sent_message.message_id, delay=15))
+        sent_message = await bot.send_message(callback_query.message.chat.id, confirmation_text, parse_mode="Markdown", disable_notification=True)
+        asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_message.message_id, delay=15))
         await callback_query.answer()
         return
     else:
         confirmation_text = f"Конфигурация для **{username}** отправлена."
         sent_confirmation = await bot.send_message(
-            chat_id=user_id,
+            chat_id=callback_query.message.chat.id,
             text=confirmation_text,
             parse_mode="Markdown",
             disable_notification=True
         )
-        asyncio.create_task(delete_message_after_delay(user_id, sent_confirmation.message_id, delay=15))
+        asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_confirmation.message_id, delay=15))
     for message_id in sent_messages:
-        asyncio.create_task(delete_message_after_delay(user_id, message_id, delay=15))
+        asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, message_id, delay=15))
         
     clients = db.get_client_list(server_id=current_server)
     client_info = next((c for c in clients if c[0] == username), None)
@@ -1500,14 +1508,15 @@ async def create_backup_callback(callback_query: types.CallbackQuery):
         await loop.run_in_executor(None, create_zip, backup_filepath)
         if os.path.exists(backup_filepath):
             with open(backup_filepath, 'rb') as f:
-                await bot.send_document(admin, f, caption=backup_filename, disable_notification=True)
+                # Отправляем в тот же чат, где была нажата кнопка
+                await bot.send_document(callback_query.message.chat.id, f, caption=backup_filename, disable_notification=True)
             os.remove(backup_filepath)
         else:
             logger.error(f"Бекап файл не создан: {backup_filepath}")
-            await bot.send_message(admin, "Не удалось создать бекап.", disable_notification=True)
+            await bot.send_message(callback_query.message.chat.id, "Не удалось создать бекап.", disable_notification=True)
     except Exception as e:
         logger.error(f"Ошибка при создании бекапа: {e}")
-        await bot.send_message(admin, "Не удалось создать бекап.", disable_notification=True)
+        await bot.send_message(callback_query.message.chat.id, "Не удалось создать бекап.", disable_notification=True)
     await callback_query.answer()
 
 def parse_transfer(transfer_str):
