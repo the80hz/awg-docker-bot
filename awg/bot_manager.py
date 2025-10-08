@@ -805,9 +805,12 @@ async def list_users_callback(callback_query: types.CallbackQuery):
         clients = db.get_clients_by_owner(owner_id=user_id, server_id=server_id)
         text_header = f"Мои конфигурации\nТекущий сервер: *{server_id}*"
 
+    # Гарантируем, что clients — список
     if not clients:
         await callback_query.answer("Список конфигураций пуст.", show_alert=True)
         return
+    if not isinstance(clients, (list, tuple)):
+        clients = [clients]
 
     keyboard = InlineKeyboardMarkup(row_width=1)
 
@@ -843,6 +846,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     total_clients = len(clients)
     shown_clients = clients[start_idx:end_idx]
     for client in shown_clients:
+        # client — это кортеж или список: (username, name, ...)
         username = client[0]
         status_icon = "🚫"
         status_suffix = ""
@@ -881,7 +885,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
                         owner_label = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
             button_text = f"{button_text} ({owner_label})"
 
-    keyboard.add(InlineKeyboardButton(text=button_text, callback_data=f"client_{username}"))
+        keyboard.add(InlineKeyboardButton(text=button_text, callback_data=f"client_{username}"))
 
     if end_idx < total_clients:
         keyboard.add(InlineKeyboardButton(text="Следующая страница", callback_data=f"list_users_next:{page+1}"))
