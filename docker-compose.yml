@@ -17,3 +17,4 @@ services:
     #   - "8443:8443"
     env_file:
       - .env
+    image: the80hz/awg-docker-bot:latest
