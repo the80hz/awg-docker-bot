@@ -833,7 +833,12 @@ async def list_users_callback(callback_query: types.CallbackQuery):
 
     expirations = db.load_expirations() if is_admin(callback_query) else {}
 
-    for client in clients:
+    MAX_BUTTONS = 50
+    page = 0
+    # Можно добавить обработку page из callback_data, если потребуется
+    total_clients = len(clients)
+    shown_clients = clients[:MAX_BUTTONS]
+    for client in shown_clients:
         username = client[0]
         status_icon = "🚫"
         status_suffix = ""
@@ -874,6 +879,8 @@ async def list_users_callback(callback_query: types.CallbackQuery):
 
         keyboard.add(InlineKeyboardButton(button_text, callback_data=f"client_{username}"))
 
+    if total_clients > MAX_BUTTONS:
+        keyboard.add(InlineKeyboardButton("Следующая страница", callback_data="list_users_next"))
     keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
 
     main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
