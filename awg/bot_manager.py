@@ -123,10 +123,24 @@ main_menu_markup = InlineKeyboardMarkup(row_width=1).add(
     InlineKeyboardButton("⚙ Управление серверами", callback_data="manage_servers")
 )
 
-user_main_menu_markup = InlineKeyboardMarkup(row_width=1).add(
-    InlineKeyboardButton("➕ Создать конфигурацию", callback_data="add_user"),
-    InlineKeyboardButton("📋 Мои конфигурации", callback_data="list_users")
-)
+
+def get_user_server_keyboard():
+    servers = db.load_servers()
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for server_id, server in servers.items():
+        name = server.get('name', server_id)
+        keyboard.add(InlineKeyboardButton(f"{name}", callback_data=f"choose_server:{server_id}"))
+    return keyboard
+
+def get_user_main_menu(server_id=None):
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    if server_id:
+        keyboard.add(InlineKeyboardButton("➕ Создать конфигурацию", callback_data=f"add_user:{server_id}"))
+        keyboard.add(InlineKeyboardButton("📋 Мои конфигурации", callback_data=f"list_users:{server_id}"))
+        keyboard.add(InlineKeyboardButton("⬅ Выбрать другой сервер", callback_data="choose_server"))
+    else:
+        keyboard = get_user_server_keyboard()
+    return keyboard
 
 current_server = None
 
@@ -268,12 +282,33 @@ async def help_command_handler(message: types.Message):
         except:
             pass
     else:
-        # Пользовательское меню
-        menu = user_main_menu_markup
-        text = f"Добро пожаловать!\nТекущий сервер для создания ключей: *{current_server}*"
-        # Сохраняем сообщение для пользователя, чтобы его можно было редактировать
+        # Пользовательское меню с выбором сервера
+        user_id = message.from_user.id
+        selected_server = user_main_messages.get(user_id, {}).get('server_id')
+        if selected_server:
+            server_name = db.load_servers().get(selected_server, {}).get('name', selected_server)
+            text = f"Добро пожаловать!\nТекущий сервер: *{server_name}*"
+        else:
+            text = "Выберите сервер для создания или просмотра профилей:"
+        menu = get_user_main_menu(selected_server)
         sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
-        user_main_messages[message.from_user.id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
+        user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id, 'server_id': selected_server}
+@dp.callback_query_handler(lambda c: c.data.startswith("choose_server"))
+async def choose_server_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    if ":" in callback_query.data:
+        # Выбран сервер
+        _, server_id = callback_query.data.split(":", 1)
+        user_main_messages[user_id]['server_id'] = server_id
+        server_name = db.load_servers().get(server_id, {}).get('name', server_id)
+        text = f"Текущий сервер: *{server_name}*"
+        menu = get_user_main_menu(server_id)
+        await bot.edit_message_text(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id, text=text, reply_markup=menu, parse_mode='MarkDown')
+    else:
+        # Показать список серверов
+        text = "Выберите сервер для создания или просмотра профилей:"
+        menu = get_user_server_keyboard()
+        await bot.edit_message_text(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id, text=text, reply_markup=menu)
 
 @dp.message_handler()
 async def handle_messages(message: types.Message):
