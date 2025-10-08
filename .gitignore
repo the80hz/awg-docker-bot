@@ -3,3 +3,4 @@ awg/files/
 awg/users/
 myenv/
 *.DS_Store
+.env

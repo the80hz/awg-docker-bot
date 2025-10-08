@@ -1,4 +1,5 @@
 import db
+from dotenv import load_dotenv
 import aiohttp
 import logging
 import asyncio
@@ -28,13 +29,18 @@ from zoneinfo import ZoneInfo
 
 CURRENT_TIMEZONE = ZoneInfo('Europe/Moscow')
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Загружаем переменные из .env
+load_dotenv()
+
 
 config = db.get_config()
-bot_token = config.get('bot_token')
-admin_id = config.get('admin_id')
+# Сначала пробуем взять из переменных окружения, если нет — из config
+bot_token = os.getenv('BOT_TOKEN') or config.get('bot_token')
+admin_id = os.getenv('ADMIN_ID') or config.get('admin_id')
 
 if not all([bot_token, admin_id]):
     logger.error("Отсутствуют обязательные настройки бота (bot_token или admin_id).")

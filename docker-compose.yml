@@ -15,3 +15,5 @@ services:
     # Если нужен webhook, раскомментируйте:
     # ports:
     #   - "8443:8443"
+    env_file:
+      - .env
