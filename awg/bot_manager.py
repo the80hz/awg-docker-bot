@@ -1062,9 +1062,10 @@ async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
             main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
             main_message_id = user_main_messages.get(user_id, {}).get('message_id')
             if main_chat_id and main_message_id:
-                if user_state.get(user_id, {}).get('server_id'):
-                    menu_to_show = get_user_main_menu(server_id=user_state[user_id]['server_id'])
-                    home_text = f"Выберите действие\nТекущий сервер: *{current_server}*"
+                server_id = user_state.get(user_id, {}).get('server_id')
+                if server_id:
+                    menu_to_show = get_user_main_menu(server_id=server_id)
+                    home_text = f"Выберите действие\nТекущий сервер: *{server_id}*"
                 else:
                     menu_to_show = get_user_server_keyboard()
                     home_text = "Выберите сервер"
@@ -1155,9 +1156,13 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
         menu_to_show = main_menu_markup
         home_text = f"Админ-панель\nТекущий сервер: *{current_server}*"
     else:
-        # Для обычного пользователя формируем меню с учетом выбранного сервера
-        menu_to_show = get_user_main_menu(server_id=user_state.get(user_id, {}).get('server_id'))
-        home_text = f"Выберите действие\nТекущий сервер: *{current_server}*"
+        server_id = user_state.get(user_id, {}).get('server_id')
+        if server_id:
+            menu_to_show = get_user_main_menu(server_id=server_id)
+            home_text = f"Выберите действие\nТекущий сервер: *{server_id}*"
+        else:
+            menu_to_show = get_user_server_keyboard()
+            home_text = "Выберите сервер"
     
     if main_chat_id and main_message_id:
         # Сначала показываем подтверждение удаления
