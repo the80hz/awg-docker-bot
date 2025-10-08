@@ -1330,7 +1330,12 @@ async def return_home(callback_query: types.CallbackQuery):
         user_main_messages[user_id].pop('traffic_limit', None)
 
         # Определяем меню и текст для пользователя
-        menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+        user_id = callback_query.from_user.id
+        if is_admin(callback_query):
+            menu_to_show = main_menu_markup
+        else:
+            server_id = user_main_messages.get(user_id, {}).get('server_id')
+            menu_to_show = get_user_main_menu(server_id)
         text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
 
         try:
@@ -1343,7 +1348,11 @@ async def return_home(callback_query: types.CallbackQuery):
             )
         except:
             # Определяем правильное меню для пользователя
-            menu_to_use = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+            if is_admin(callback_query):
+                menu_to_use = main_menu_markup
+            else:
+                server_id = user_main_messages.get(user_id, {}).get('server_id')
+                menu_to_use = get_user_main_menu(server_id)
             sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
             user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
             try:
@@ -1352,7 +1361,11 @@ async def return_home(callback_query: types.CallbackQuery):
                 pass
     else:
         # Определяем правильное меню для пользователя
-        menu_to_use = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
+        if is_admin(callback_query):
+            menu_to_use = main_menu_markup
+        else:
+            server_id = user_main_messages.get(user_id, {}).get('server_id')
+            menu_to_use = get_user_main_menu(server_id)
         text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
         sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
         user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
