@@ -142,8 +142,11 @@ def get_user_main_menu(server_id=None):
         keyboard = get_user_server_keyboard()
     return keyboard
 
+
 current_server = None
 
+# Состояния пользователей (выбранный сервер и др.)
+user_state = {}
 user_main_messages = {}
 isp_cache = {}
 ISP_CACHE_FILE = 'files/isp_cache.json'
@@ -284,7 +287,7 @@ async def help_command_handler(message: types.Message):
     else:
         # Пользовательское меню с выбором сервера
         user_id = message.from_user.id
-        selected_server = user_main_messages.get(user_id, {}).get('server_id')
+        selected_server = user_state.get(user_id, {}).get('server_id')
         if selected_server:
             server_name = db.load_servers().get(selected_server, {}).get('name', selected_server)
             text = f"Добро пожаловать!\nТекущий сервер: *{server_name}*"
@@ -292,14 +295,14 @@ async def help_command_handler(message: types.Message):
             text = "Выберите сервер для создания или просмотра профилей:"
         menu = get_user_main_menu(selected_server)
         sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
-        user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id, 'server_id': selected_server}
+        user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
 @dp.callback_query_handler(lambda c: c.data.startswith("choose_server"))
 async def choose_server_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     if ":" in callback_query.data:
         # Выбран сервер
         _, server_id = callback_query.data.split(":", 1)
-        user_main_messages[user_id]['server_id'] = server_id
+        user_state[user_id] = {'server_id': server_id}
         server_name = db.load_servers().get(server_id, {}).get('name', server_id)
         text = f"Текущий сервер: *{server_name}*"
         menu = get_user_main_menu(server_id)
@@ -537,7 +540,7 @@ async def handle_messages(message: types.Message):
 async def add_user_start(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
-    server_id = current_server if is_admin(callback_query) else user_main_messages.get(user_id, {}).get('server_id')
+    server_id = current_server if is_admin(callback_query) else user_state.get(user_id, {}).get('server_id')
     if not server_id:
         await callback_query.answer("Сервер не выбран, создание конфигурации временно недоступно.", show_alert=True)
         return
@@ -791,7 +794,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 async def list_users_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
-    server_id = current_server if is_admin(callback_query) else user_main_messages.get(user_id, {}).get('server_id')
+    server_id = current_server if is_admin(callback_query) else user_state.get(user_id, {}).get('server_id')
     if not server_id:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
@@ -1334,7 +1337,7 @@ async def return_home(callback_query: types.CallbackQuery):
         if is_admin(callback_query):
             menu_to_show = main_menu_markup
         else:
-            server_id = user_main_messages.get(user_id, {}).get('server_id')
+            server_id = user_state.get(user_id, {}).get('server_id')
             menu_to_show = get_user_main_menu(server_id)
         text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
 
