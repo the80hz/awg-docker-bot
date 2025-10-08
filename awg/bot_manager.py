@@ -647,8 +647,8 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
             await callback_query.answer("У вас нет доступа к этой конфигурации.", show_alert=True)
             return
 
-    expiration_time = db.get_user_expiration(username, server_id=current_server)
-    traffic_limit = db.get_user_traffic_limit(username, server_id=current_server)
+    expiration_time = db.get_user_expiration(username, server_id=server_id)
+    traffic_limit = db.get_user_traffic_limit(username, server_id=server_id)
     status = "🔴 Offline"
     incoming_traffic = "↓—"
     outgoing_traffic = "↑—"
@@ -656,7 +656,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     total_bytes = 0
     formatted_total = "0.00B"
 
-    active_clients = db.get_active_list(server_id=current_server)
+    active_clients = db.get_active_list(server_id=server_id)
     active_info = None
     last_handshake_str = None  # Инициализация
     last_handshake_dt = None
@@ -1129,9 +1129,11 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
         if owner_id != user_id:
             await callback_query.answer("У вас нет прав для удаления этой конфигурации.", show_alert=True)
             return
-    success = db.deactive_user_db(username, server_id=current_server)
+    # Используем корректный server_id: у админа глобальный current_server, у пользователя — выбранный сервер
+    effective_server_id = current_server if is_admin(callback_query) else user_state.get(callback_query.from_user.id, {}).get('server_id')
+    success = db.deactive_user_db(username, server_id=effective_server_id)
     if success:
-        db.remove_user_expiration(username, server_id=current_server)
+        db.remove_user_expiration(username, server_id=effective_server_id)
         try:
             scheduler.remove_job(job_id=username)
         except:
