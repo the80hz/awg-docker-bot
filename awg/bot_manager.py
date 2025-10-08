@@ -834,10 +834,14 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     expirations = db.load_expirations() if is_admin(callback_query) else {}
 
     MAX_BUTTONS = 50
+    # Получаем номер страницы из callback_data, если есть
     page = 0
-    # Можно добавить обработку page из callback_data, если потребуется
+    if callback_query.data.startswith('list_users_next'):
+        page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
+    start_idx = page * MAX_BUTTONS
+    end_idx = start_idx + MAX_BUTTONS
     total_clients = len(clients)
-    shown_clients = clients[:MAX_BUTTONS]
+    shown_clients = clients[start_idx:end_idx]
     for client in shown_clients:
         username = client[0]
         status_icon = "🚫"
@@ -877,27 +881,32 @@ async def list_users_callback(callback_query: types.CallbackQuery):
                         owner_label = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
             button_text = f"{button_text} ({owner_label})"
 
-        keyboard.add(InlineKeyboardButton(button_text, callback_data=f"client_{username}"))
+    keyboard.add(InlineKeyboardButton(text=button_text, callback_data=f"client_{username}"))
 
-    if total_clients > MAX_BUTTONS:
-        keyboard.add(InlineKeyboardButton("Следующая страница", callback_data="list_users_next"))
-    keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
+    if end_idx < total_clients:
+        keyboard.add(InlineKeyboardButton(text="Следующая страница", callback_data=f"list_users_next:{page+1}"))
+    keyboard.add(InlineKeyboardButton(text="Домой", callback_data="home"))
 
     main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
     main_message_id = user_main_messages.get(user_id, {}).get('message_id')
 
     if main_chat_id and main_message_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=main_chat_id,
-                message_id=main_message_id,
-                text=text_header,
-                reply_markup=keyboard,
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Ошибка при редактировании сообщения: {e}")
-            await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
+        current_message = callback_query.message
+        def markup_equal(a, b):
+            return getattr(a, 'to_python', lambda: a)() == getattr(b, 'to_python', lambda: b)()
+        # Проверяем, изменились ли текст или клавиатура
+        if current_message.text != text_header or not markup_equal(current_message.reply_markup, keyboard):
+            try:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text=text_header,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при редактировании сообщения: {e}")
+                await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
     else:
         sent_message = await callback_query.message.reply(
             text_header,
@@ -982,8 +991,8 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
                 
         keyboard = InlineKeyboardMarkup(row_width=2)
         keyboard.add(
-            InlineKeyboardButton("⬅️ Назад", callback_data=f"client_{original_username}"),
-            InlineKeyboardButton("Домой", callback_data="home"))
+            InlineKeyboardButton(text="⬅️ Назад", callback_data=f"client_{original_username}"),
+            InlineKeyboardButton(text="Домой", callback_data="home"))
 
         await callback_query.message.edit_text(text, reply_markup=keyboard)
         await callback_query.answer()
