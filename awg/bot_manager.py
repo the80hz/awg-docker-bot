@@ -621,15 +621,15 @@ def format_vpn_key(vpn_key, num_lines=8):
 
 @dp.callback_query_handler(lambda c: c.data.startswith('client_'))
 async def client_selected_callback(callback_query: types.CallbackQuery):
-    if not current_server:
+    user_id = callback_query.from_user.id
+    server_id = current_server if is_admin(callback_query) else user_state.get(user_id, {}).get('server_id')
+    if not server_id:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
-        
     _, username = callback_query.data.split('client_', 1)
     username = username.strip()
-    # Сохраняем оригинальное имя для callback_data
     original_username = username
-    clients = db.get_client_list(server_id=current_server)
+    clients = db.get_client_list(server_id=server_id)
     client_info = next((c for c in clients if c[0] == username), None)
     if not client_info:
         await callback_query.answer("Ошибка: пользователь не найден.", show_alert=True)
@@ -638,7 +638,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     # Проверка владельца для не-админов
     if not is_admin(callback_query):
         expirations = db.load_expirations()
-        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
+        owner_id = expirations.get(username, {}).get(server_id, {}).get('owner_id')
         if owner_id != callback_query.from_user.id:
             await callback_query.answer("У вас нет доступа к этой конфигурации.", show_alert=True)
             return
@@ -919,19 +919,18 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
         await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
         return
         
-    if not current_server:
+    user_id = callback_query.from_user.id
+    server_id = current_server if is_admin(callback_query) else user_state.get(user_id, {}).get('server_id')
+    if not server_id:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
-        
     _, username = callback_query.data.split('connections_', 1)
     username = username.strip()
     original_username = username
     file_path = os.path.join('files', 'connections', f'{username}_ip.json')
-    
     os.makedirs(os.path.join('files', 'connections'), exist_ok=True)
-    
     try:
-        active_clients = db.get_active_list(server_id=current_server)
+        active_clients = db.get_active_list(server_id=server_id)
         active_info = next((client for client in active_clients if isinstance(client, dict) and client.get('name') == username), None)
         
         if active_info and active_info.get('endpoint'):
@@ -1336,10 +1335,12 @@ async def return_home(callback_query: types.CallbackQuery):
         user_id = callback_query.from_user.id
         if is_admin(callback_query):
             menu_to_show = main_menu_markup
+            text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*"
         else:
             server_id = user_state.get(user_id, {}).get('server_id')
             menu_to_show = get_user_main_menu(server_id)
-        text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
+            server_name = db.load_servers().get(server_id, {}).get('name', server_id) if server_id else "-"
+            text_to_show = f"Выберите действие\nТекущий сервер: *{server_name}*"
 
         try:
             await bot.edit_message_text(
