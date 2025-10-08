@@ -51,10 +51,10 @@ servers = db.load_servers()
 if not servers:
     logger.warning("Не найдено ни одного сервера в конфигурации")
 
-bot = Bot(bot_token)
+bot = Bot(str(bot_token))
 try:
-    admin = int(admin_id)
-except Exception:
+    admin = int(str(admin_id))
+except (TypeError, ValueError):
     logger.error("admin_id должен быть числом (id пользователя или id чата)")
     sys.exit(1)
 
@@ -154,7 +154,10 @@ ISP_CACHE_FILE = 'files/isp_cache.json'
 CACHE_TTL = timedelta(hours=24)
 
 def get_interface_name():
-    return os.path.basename(WG_CONFIG_FILE).split('.')[0]
+    if not WG_CONFIG_FILE:
+        return ""
+    # Ensure WG_CONFIG_FILE is a string before passing to os.path.basename
+    return os.path.basename(str(WG_CONFIG_FILE)).split('.')[0]
 
 async def load_isp_cache():
     global isp_cache
@@ -1641,7 +1644,7 @@ async def send_user_config(callback_query: types.CallbackQuery):
             await bot.edit_message_text(
                 chat_id=callback_query.message.chat.id,
                 message_id=callback_query.message.message_id,
-                text=text,
+                text=locals().get('text', ''),
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
