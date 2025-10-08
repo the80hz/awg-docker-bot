@@ -654,17 +654,19 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 
     active_clients = db.get_active_list(server_id=current_server)
     active_info = None
+    last_handshake_str = None  # Инициализация
+    last_handshake_dt = None
     for ac in active_clients:
         if isinstance(ac, dict) and ac.get('name') == username:
             active_info = ac
             break
         elif isinstance(ac, (list, tuple)) and ac[0] == username:
-            active_info = {'name': ac[0], 'last_handshake': ac.get(1, 'never'), 'transfer': ac.get(2, '0/0')}
+            active_info = {'name': ac[0], 'last_handshake': ac[1] if len(ac) > 1 else 'never', 'transfer': ac[2] if len(ac) > 2 else '0/0'}
             break
 
     if active_info:
         last_handshake_str = active_info.get('last_handshake', 'never')
-        if last_handshake_str.lower() not in ['never', 'нет данных', '-']:
+        if isinstance(last_handshake_str, str) and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
             try:
                 last_handshake_dt = parse_relative_time(last_handshake_str)
                 if last_handshake_dt:
@@ -698,6 +700,8 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
         traffic_data = await read_traffic(username)
         total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
         formatted_total = humanize_bytes(total_bytes)
+        last_handshake_str = None
+        last_handshake_dt = None
 
     allowed_ips = client_info[2]
     ipv4_match = re.search(r'(\d{1,3}\.){3}\d{1,3}/\d+', allowed_ips)
@@ -725,7 +729,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 
     traffic_limit_display = "♾️ Неограниченно" if traffic_limit == "Неограниченно" else traffic_limit
 
-    if last_handshake_str and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
+    if last_handshake_str and isinstance(last_handshake_str, str) and last_handshake_str.lower() not in ['never', 'нет данных', '-'] and last_handshake_dt:
         show_last_handshake = f"{last_handshake_dt.astimezone(CURRENT_TIMEZONE).strftime('%d/%m/%Y %H:%M:%S')}"
     else:
         show_last_handshake = "❗Нет данных❗"
