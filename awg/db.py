@@ -304,18 +304,21 @@ def create_config(path='files/setting.ini', servers_list=None):
     config = configparser.ConfigParser()
     config.add_section("setting")
 
-    bot_token = input('Введите токен Telegram бота: ').strip()
-    admin_id = input('Введите Telegram ID администратора: ').strip()
+    # Интерактивный ввод отключён. Для контейнера config создаётся только если явно передан servers_list.
+    bot_token = os.getenv('BOT_TOKEN', '').strip()
+    admin_id = os.getenv('ADMIN_ID', '').strip()
+    if not bot_token or not admin_id:
+        raise RuntimeError('BOT_TOKEN и ADMIN_ID должны быть заданы через переменные окружения или .env')
     
+    # Интерактивность для серверов отключена. Если servers_list не задан — ничего не спрашиваем.
     if servers_list:
         for server in servers_list:
             is_remote = server.get('is_remote', False)
             if is_remote:
-                host = server.get('host') or input(f"Введите IP-адрес для сервера {server['name']}: ").strip()
-                port = server.get('port') or input(f"Введите SSH порт для сервера {server['name']} (по умолчанию 22): ").strip() or "22"
-                username = server.get('username') or input(f"Введите имя пользователя для сервера {server['name']}: ").strip()
-                key_path = server.get('key_path') or input(f"Введите путь до приватного SSH-ключа для сервера {server['name']}, например /home/user/.ssh/id_rsa (или нажмите Enter для ввода пароля): ").strip()
-                
+                host = server.get('host', '')
+                port = server.get('port', '22')
+                username = server.get('username', '')
+                key_path = server.get('key_path', '')
                 if key_path:
                     password = ""
                     auth_type = "key"
@@ -560,7 +563,8 @@ def get_config(path='files/setting.ini', server_id=None):
             return {}
     else:
         if not os.path.exists(path):
-            create_config(path)
+            # Не создаём конфиг автоматически, если файла нет — просто возвращаем пустой dict
+            return {}
 
         config = configparser.ConfigParser()
         config.read(path)
