@@ -1055,8 +1055,10 @@ async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
     # Проверка владельца для не-админов
     if not is_admin(callback_query):
         expirations = db.load_expirations()
-        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
-        if owner_id != callback_query.from_user.id:
+        user_id = callback_query.from_user.id
+        server_id = user_state.get(user_id, {}).get('server_id') or current_server
+        owner_id = expirations.get(username, {}).get(server_id, {}).get('owner_id')
+        if owner_id != user_id:
             # Обновим главное сообщение, чтобы закрыть окно подтверждения и показать домашний экран
             user_id = callback_query.from_user.id
             main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
@@ -1118,8 +1120,10 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
     # Проверка владельца для не-админов
     if not is_admin(callback_query):
         expirations = db.load_expirations()
-        owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
-        if owner_id != callback_query.from_user.id:
+        user_id = callback_query.from_user.id
+        server_id = user_state.get(user_id, {}).get('server_id') or current_server
+        owner_id = expirations.get(username, {}).get(server_id, {}).get('owner_id')
+        if owner_id != user_id:
             await callback_query.answer("У вас нет прав для удаления этой конфигурации.", show_alert=True)
             return
     success = db.deactive_user_db(username, server_id=current_server)

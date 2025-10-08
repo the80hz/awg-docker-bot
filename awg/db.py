@@ -10,6 +10,7 @@ import paramiko
 import getpass
 import threading
 import time
+import shutil
 import bcrypt
 from datetime import datetime, timedelta
 
@@ -1069,7 +1070,7 @@ def deactive_user_db(client_name, server_id=None):
                         os.remove(file)
                 
                 if os.path.exists(user_dir):
-                    os.rmdir(user_dir)
+                    shutil.rmtree(user_dir)
             except Exception as e:
                 logger.error(f"Ошибка удаления локальных файлов: {e}")
 
