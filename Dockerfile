@@ -3,7 +3,7 @@ FROM python:3.13-slim
 
 # Установить необходимые пакеты
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tzdata gcc && \
+    apt-get install -y --no-install-recommends tzdata build-essential && \
     rm -rf /var/lib/apt/lists/*
 
 # Установить рабочую директорию
