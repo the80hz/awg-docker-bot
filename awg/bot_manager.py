@@ -279,7 +279,7 @@ async def help_command_handler(message: types.Message):
         menu = main_menu_markup
         text = f"Админ-панель\nТекущий сервер: *{current_server}*"
         # Сохраняем сообщение для админа, чтобы его можно было редактировать
-        sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
+        sent_message = await message.answer(text, reply_markup=menu, parse_mode='Markdown')
         user_main_messages[admin] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
         try:
             await bot.pin_chat_message(chat_id=message.chat.id, message_id=sent_message.message_id, disable_notification=True)
@@ -295,7 +295,7 @@ async def help_command_handler(message: types.Message):
         else:
             text = "Выберите сервер для создания или просмотра профилей:"
         menu = get_user_main_menu(selected_server)
-        sent_message = await message.answer(text, reply_markup=menu, parse_mode='MarkDown')
+        sent_message = await message.answer(text, reply_markup=menu, parse_mode='Markdown')
         user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
 @dp.callback_query_handler(lambda c: c.data.startswith("choose_server"))
 async def choose_server_callback(callback_query: types.CallbackQuery):
@@ -307,7 +307,7 @@ async def choose_server_callback(callback_query: types.CallbackQuery):
         server_name = db.load_servers().get(server_id, {}).get('name', server_id)
         text = f"Текущий сервер: *{server_name}*"
         menu = get_user_main_menu(server_id)
-        await bot.edit_message_text(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id, text=text, reply_markup=menu, parse_mode='MarkDown')
+        await bot.edit_message_text(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id, text=text, reply_markup=menu, parse_mode='Markdown')
     else:
         # Показать список серверов
         text = "Выберите сервер для создания или просмотра профилей:"
@@ -846,7 +846,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
                         if delta <= timedelta(minutes=3):
                             status_icon = "🟢"
                         else:
-                            status_icon = "�"
+                            status_icon = "🔴"
                         minutes_ago = max(1, int(delta.total_seconds() // 60))
                         status_suffix = f" ({minutes_ago}m)"
                     else:
@@ -883,7 +883,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
                 message_id=main_message_id,
                 text=text_header,
                 reply_markup=keyboard,
-                parse_mode='MarkDown'
+                parse_mode='Markdown'
             )
         except Exception as e:
             logger.error(f"Ошибка при редактировании сообщения: {e}")
@@ -892,7 +892,7 @@ async def list_users_callback(callback_query: types.CallbackQuery):
         sent_message = await callback_query.message.reply(
             text_header,
             reply_markup=keyboard,
-            parse_mode='MarkDown'
+            parse_mode='Markdown'
         )
         user_main_messages[user_id] = {
             'chat_id': sent_message.chat.id,
@@ -1057,6 +1057,37 @@ async def confirm_delete_user_callback(callback_query: types.CallbackQuery):
         expirations = db.load_expirations()
         owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
         if owner_id != callback_query.from_user.id:
+            # Обновим главное сообщение, чтобы закрыть окно подтверждения и показать домашний экран
+            user_id = callback_query.from_user.id
+            main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+            main_message_id = user_main_messages.get(user_id, {}).get('message_id')
+            if main_chat_id and main_message_id:
+                if user_state.get(user_id, {}).get('server_id'):
+                    menu_to_show = get_user_main_menu(server_id=user_state[user_id]['server_id'])
+                    home_text = f"Выберите действие\nТекущий сервер: *{current_server}*"
+                else:
+                    menu_to_show = get_user_server_keyboard()
+                    home_text = "Выберите сервер"
+                try:
+                    await bot.edit_message_text(
+                        chat_id=main_chat_id,
+                        message_id=main_message_id,
+                        text="У вас нет прав для удаления этой конфигурации.",
+                        parse_mode="Markdown",
+                        reply_markup=InlineKeyboardMarkup().add(
+                            InlineKeyboardButton("🏠 Домой", callback_data="home")
+                        )
+                    )
+                    await asyncio.sleep(2)
+                    await bot.edit_message_text(
+                        chat_id=main_chat_id,
+                        message_id=main_message_id,
+                        text=home_text,
+                        parse_mode="Markdown",
+                        reply_markup=menu_to_show
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при обновлении сообщения: {e}")
             await callback_query.answer("У вас нет прав для удаления этой конфигурации.", show_alert=True)
             return
     
@@ -1119,8 +1150,14 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
     main_message_id = user_main_messages.get(user_id, {}).get('message_id')
     
     # Определяем правильное меню и текст для пользователя
-    menu_to_show = main_menu_markup if is_admin(callback_query) else user_main_menu_markup
-    home_text = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
+    # Подбираем правильное меню для пользователя
+    if is_admin(callback_query):
+        menu_to_show = main_menu_markup
+        home_text = f"Админ-панель\nТекущий сервер: *{current_server}*"
+    else:
+        # Для обычного пользователя формируем меню с учетом выбранного сервера
+        menu_to_show = get_user_main_menu(server_id=user_state.get(user_id, {}).get('server_id'))
+        home_text = f"Выберите действие\nТекущий сервер: *{current_server}*"
     
     if main_chat_id and main_message_id:
         # Сначала показываем подтверждение удаления
@@ -1345,7 +1382,7 @@ async def return_home(callback_query: types.CallbackQuery):
                 message_id=main_message['message_id'],
                 text=text_to_show,
                 reply_markup=menu_to_show,
-                parse_mode='MarkDown'
+                parse_mode='Markdown'
             )
         except:
             # Определяем правильное меню для пользователя
@@ -1354,7 +1391,7 @@ async def return_home(callback_query: types.CallbackQuery):
             else:
                 server_id = user_main_messages.get(user_id, {}).get('server_id')
                 menu_to_use = get_user_main_menu(server_id)
-            sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
+            sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='Markdown')
             user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
             try:
                 await bot.pin_chat_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id, disable_notification=True)
@@ -1368,7 +1405,7 @@ async def return_home(callback_query: types.CallbackQuery):
             server_id = user_main_messages.get(user_id, {}).get('server_id')
             menu_to_use = get_user_main_menu(server_id)
         text_to_show = f"Админ-панель\nТекущий сервер: *{current_server}*" if is_admin(callback_query) else f"Выберите действие\nТекущий сервер: *{current_server}*"
-        sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='MarkDown')
+        sent_message = await callback_query.message.reply(text_to_show, reply_markup=menu_to_use, parse_mode='Markdown')
         user_main_messages[user_id] = {'chat_id': sent_message.chat.id, 'message_id': sent_message.message_id}
         try:
             await bot.pin_chat_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id, disable_notification=True)
