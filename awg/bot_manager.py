@@ -21,6 +21,7 @@ from aiogram.utils import exceptions as aiogram_exceptions
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.markdown import escape_md
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -805,68 +806,70 @@ async def list_users_callback(callback_query: types.CallbackQuery):
         await callback_query.answer("Список конфигураций пуст.", show_alert=True)
         return
 
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
     active_clients = db.get_active_list(server_id=server_id)
-    active_clients_dict = {}
-    for client in active_clients:
-        if isinstance(client, dict):
-            username = client.get('name')
-            last_handshake = client.get('last_handshake', 'never')
-        else:
-            username = client[0] if isinstance(client, (list, tuple)) else str(client)
-            last_handshake = 'never'
-        if username:
-            active_clients_dict[username] = last_handshake
+    active_lookup = {}
+    for item in active_clients:
+        if isinstance(item, dict):
+            name = item.get('name')
+            if name:
+                active_lookup[name] = {
+                    'last_handshake': item.get('last_handshake', 'never'),
+                    'transfer': item.get('transfer', '0/0')
+                }
+        elif isinstance(item, (list, tuple)) and item:
+            name = item[0]
+            if name:
+                last_handshake_value = item[1] if len(item) > 1 else 'never'
+                transfer_value = item[2] if len(item) > 2 else '0/0'
+                active_lookup[name] = {
+                    'last_handshake': last_handshake_value,
+                    'transfer': transfer_value
+                }
 
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    now = datetime.now(pytz.UTC)
-
-    # Загружаем информацию о владельцах для админов
     expirations = db.load_expirations() if is_admin(callback_query) else {}
 
     for client in clients:
         username = client[0]
-        last_handshake_str = active_clients_dict.get(username)
-        
-        # Определяем статус подключения
-        if last_handshake_str and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
-            try:
-                last_handshake_dt = parse_relative_time(last_handshake_str)
-                if last_handshake_dt:
-                    delta = now - last_handshake_dt
-                    delta_days = delta.days
-                    if delta_days <= 5:
-                        status_icon = "💻"
-                    else:
-                        status_icon = "❌"
-                    status_display = f"{status_icon}({delta_days}d)"
-                else:
-                    status_display = f"🚫(?d)"
-            except ValueError:
-                logger.error(f"Некорректный формат даты для пользователя {username}: {last_handshake_str}")
-                status_display = f"🚫(?d)"
-        else:
-            status_display = f"🚫(?d)"
+        status_icon = "🚫"
+        status_suffix = ""
 
-        # Для админов показываем владельца профиля
-        if is_admin(callback_query):
-            owner_id = expirations.get(username, {}).get(current_server, {}).get('owner_id')
-            if owner_id:
+        active_info = active_lookup.get(username)
+        if active_info:
+            last_handshake_str = active_info.get('last_handshake', 'never')
+            if isinstance(last_handshake_str, str) and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
                 try:
-                    # Пытаемся получить информацию о пользователе (это может быть username)
-                    owner_info = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
-                except:
-                    owner_info = f"ID:{owner_id}"
+                    last_handshake_dt = parse_relative_time(last_handshake_str)
+                    if last_handshake_dt:
+                        delta = datetime.now(pytz.UTC) - last_handshake_dt
+                        if delta <= timedelta(minutes=3):
+                            status_icon = "🟢"
+                        else:
+                            status_icon = "�"
+                        minutes_ago = max(1, int(delta.total_seconds() // 60))
+                        status_suffix = f" ({minutes_ago}m)"
+                    else:
+                        status_icon = "❓"
+                except Exception:
+                    status_icon = "❓"
             else:
-                owner_info = "Unknown"
-            
-            button_text = f"{status_display} {username} ({owner_info})"
-        else:
-            button_text = f"{status_display} {username}"
+                status_icon = "❓"
 
-        keyboard.insert(InlineKeyboardButton(
-            button_text,
-            callback_data=f"client_{username}"
-        ))
+        button_text = f"{status_icon}{status_suffix} {username}"
+
+        if expirations and isinstance(expirations, dict) and is_admin(callback_query):
+            owner_label = "Unknown"
+            user_servers = expirations.get(username)
+            if isinstance(user_servers, dict):
+                server_info = user_servers.get(server_id) or user_servers.get(str(server_id))
+                if isinstance(server_info, dict):
+                    owner_id = server_info.get('owner_id')
+                    if owner_id:
+                        owner_label = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
+            button_text = f"{button_text} ({owner_label})"
+
+        keyboard.add(InlineKeyboardButton(button_text, callback_data=f"client_{username}"))
 
     keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
 
@@ -1455,6 +1458,9 @@ async def send_user_config(callback_query: types.CallbackQuery):
         
     clients = db.get_client_list(server_id=current_server)
     client_info = next((c for c in clients if c[0] == username), None)
+
+    last_handshake_str = None
+    last_handshake_dt = None
     
     if client_info:
         expiration_time = db.get_user_expiration(username, server_id=current_server)
@@ -1497,6 +1503,12 @@ async def send_user_config(callback_query: types.CallbackQuery):
                     formatted_total = humanize_bytes(total_bytes)
                 except ValueError:
                     logger.error(f"Некорректный формат даты для пользователя {username}: {last_handshake_str}")
+        else:
+            traffic_data = await read_traffic(username)
+            total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
+            formatted_total = humanize_bytes(total_bytes)
+            last_handshake_str = None
+            last_handshake_dt = None
 
         allowed_ips = client_info[2]
         ipv4_match = re.search(r'(\d{1,3}\.){3}\d{1,3}/\d+', allowed_ips)
@@ -1524,21 +1536,36 @@ async def send_user_config(callback_query: types.CallbackQuery):
 
         traffic_limit_display = "♾️ Неограниченно" if traffic_limit == "Неограниченно" else traffic_limit
 
-        if last_handshake_str and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
-            show_last_handshake = f"{last_handshake_dt.astimezone(CURRENT_TIMEZONE).strftime('%d/%m/%Y %H:%M:%S')}"
+        if (
+            last_handshake_str
+            and isinstance(last_handshake_str, str)
+            and last_handshake_str.lower() not in ['never', 'нет данных', '-']
+            and last_handshake_dt
+        ):
+            show_last_handshake = last_handshake_dt.astimezone(CURRENT_TIMEZONE).strftime('%d/%m/%Y %H:%M:%S')
         else:
             show_last_handshake = "❗Нет данных❗"
 
+        safe_username = escape_md(str(username))
+        safe_ipv4 = escape_md(str(ipv4_address))
+        safe_status = escape_md(str(status))
+        safe_last_handshake = escape_md(str(show_last_handshake))
+        safe_date_end = escape_md(str(date_end))
+        safe_incoming = escape_md(str(incoming_traffic))
+        safe_outgoing = escape_md(str(outgoing_traffic))
+        safe_formatted_total = escape_md(str(formatted_total))
+        safe_limit = escape_md(str(traffic_limit_display))
+
         text = (
-            f"📧 _Имя:_ {username}\n"
-            f"🌐 _Внутренний IPv4:_ {ipv4_address}\n"
-            f"🌐 _Статус соединения:_ {status}\n"
-            f"🔼 _Исходящий трафик:_ {incoming_traffic}\n"
-            f"{date_end}\n"
-            f"🔼 _Исходящий трафик:_ {incoming_traffic}\n"
-            f"🔽 _Входящий трафик:_ {outgoing_traffic}\n"
-            f"📊 _Всего:_ ↑↓{formatted_total}\n"
-            f"             из **{traffic_limit_display}**\n"
+            f"📧 _Имя:_ {safe_username}\n"
+            f"🌐 _Внутренний IPv4:_ {safe_ipv4}\n"
+            f"🌐 _Статус соединения:_ {safe_status}\n"
+            f"⏳ _Последнее 🤝:_ {safe_last_handshake}\n"
+            f"{safe_date_end}\n"
+            f"🔼 _Исходящий трафик:_ {safe_incoming}\n"
+            f"🔽 _Входящий трафик:_ {safe_outgoing}\n"
+            f"📊 _Всего:_ ↑↓{safe_formatted_total}\n"
+            f"             из **{safe_limit}**\n"
         )
 
     if client_info:
