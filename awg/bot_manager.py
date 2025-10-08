@@ -537,7 +537,8 @@ async def handle_messages(message: types.Message):
 async def add_user_start(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
-    if not current_server:
+    server_id = current_server if is_admin(callback_query) else user_main_messages.get(user_id, {}).get('server_id')
+    if not server_id:
         await callback_query.answer("Сервер не выбран, создание конфигурации временно недоступно.", show_alert=True)
         return
 
@@ -547,11 +548,11 @@ async def add_user_start(callback_query: types.CallbackQuery):
     
     # Сразу создаем профиль без выбора длительности и трафика
     # Сохраняем информацию о владельце профиля
-    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=callback_query.from_user.id, server_id=current_server)
+    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=callback_query.from_user.id, server_id=server_id)
     
     confirmation_text = f"Пользователь *{client_name}* добавлен."
     
-    success = db.root_add(client_name, server_id=current_server, ipv6=False)
+    success = db.root_add(client_name, server_id=server_id, ipv6=False)
     if success:
         try:
             conf_path = os.path.join('users', client_name, f'{client_name}.conf')
@@ -790,23 +791,24 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 async def list_users_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
-    if not current_server:
+    server_id = current_server if is_admin(callback_query) else user_main_messages.get(user_id, {}).get('server_id')
+    if not server_id:
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
     
     # Проверяем, админ ли пользователь
     if is_admin(callback_query):
-        clients = db.get_client_list(server_id=current_server)
-        text_header = f"Все пользователи\nТекущий сервер: *{current_server}*"
+        clients = db.get_client_list(server_id=server_id)
+        text_header = f"Все пользователи\nТекущий сервер: *{server_id}*"
     else:
-        clients = db.get_clients_by_owner(owner_id=user_id, server_id=current_server)
-        text_header = f"Мои конфигурации\nТекущий сервер: *{current_server}*"
+        clients = db.get_clients_by_owner(owner_id=user_id, server_id=server_id)
+        text_header = f"Мои конфигурации\nТекущий сервер: *{server_id}*"
 
     if not clients:
         await callback_query.answer("Список конфигураций пуст.", show_alert=True)
         return
 
-    active_clients = db.get_active_list(server_id=current_server)
+    active_clients = db.get_active_list(server_id=server_id)
     active_clients_dict = {}
     for client in active_clients:
         if isinstance(client, dict):
