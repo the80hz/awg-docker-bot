@@ -647,8 +647,8 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
             await callback_query.answer("У вас нет доступа к этой конфигурации.", show_alert=True)
             return
 
-    expiration_time = db.get_user_expiration(username, server_id=server_id)
-    traffic_limit = db.get_user_traffic_limit(username, server_id=server_id)
+    expiration_time = db.get_user_expiration(username, server_id=current_server)
+    traffic_limit = db.get_user_traffic_limit(username, server_id=current_server)
     status = "🔴 Offline"
     incoming_traffic = "↓—"
     outgoing_traffic = "↑—"
@@ -656,7 +656,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     total_bytes = 0
     formatted_total = "0.00B"
 
-    active_clients = db.get_active_list(server_id=server_id)
+    active_clients = db.get_active_list(server_id=current_server)
     active_info = None
     last_handshake_str = None  # Инициализация
     last_handshake_dt = None
