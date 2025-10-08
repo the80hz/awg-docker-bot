@@ -4,3 +4,5 @@ awg/users/
 myenv/
 *.DS_Store
 .env
+venv/
+.venv/
