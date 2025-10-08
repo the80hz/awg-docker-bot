@@ -1165,25 +1165,33 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
             home_text = "Выберите сервер"
     
     if main_chat_id and main_message_id:
+        # Получаем текущее сообщение
+        current_message = callback_query.message
+        # Проверка: если текст и клавиатура совпадают, не обновляем
+        def markup_equal(a, b):
+            return getattr(a, 'to_python', lambda: a)() == getattr(b, 'to_python', lambda: b)()
+
         # Сначала показываем подтверждение удаления
-        await bot.edit_message_text(
-            chat_id=main_chat_id,
-            message_id=main_message_id,
-            text=confirmation_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(
-                InlineKeyboardButton("🏠 Домой", callback_data="home")
+        if current_message.text != confirmation_text or not markup_equal(current_message.reply_markup, InlineKeyboardMarkup().add(InlineKeyboardButton("🏠 Домой", callback_data="home"))):
+            await bot.edit_message_text(
+                chat_id=main_chat_id,
+                message_id=main_message_id,
+                text=confirmation_text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("🏠 Домой", callback_data="home")
+                )
             )
-        )
         # Через небольшую задержку показываем домашний экран
         await asyncio.sleep(2)
-        await bot.edit_message_text(
-            chat_id=main_chat_id,
-            message_id=main_message_id,
-            text=home_text,
-            parse_mode="Markdown",
-            reply_markup=menu_to_show
-        )
+        if current_message.text != home_text or not markup_equal(current_message.reply_markup, menu_to_show):
+            await bot.edit_message_text(
+                chat_id=main_chat_id,
+                message_id=main_message_id,
+                text=home_text,
+                parse_mode="Markdown",
+                reply_markup=menu_to_show
+            )
     else:
         await callback_query.answer("Ошибка: главное сообщение не найдено.", show_alert=True)
         return
