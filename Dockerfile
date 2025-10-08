@@ -1,5 +1,5 @@
 # Dockerfile для awg-docker-bot (без SSH, только локальный docker)
-FROM python:3.13-slim
+FROM python:3.12-slim
 
 # Установить необходимые пакеты
 RUN apt-get update && \
