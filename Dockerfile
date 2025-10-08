@@ -3,15 +3,7 @@ FROM python:3.13-slim
 
 # Установить необходимые пакеты
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        docker.io \
-        jq \
-        iproute2 \
-        net-tools \
-        iptables \
-        curl \
-        git \
-        tzdata && \
+    apt-get install -y --no-install-recommends tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 # Установить рабочую директорию
