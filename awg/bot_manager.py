@@ -745,28 +745,18 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
     )
 
     keyboard = InlineKeyboardMarkup(row_width=2)
-    
     # Для админов показываем все кнопки
     if is_admin(callback_query):
-        keyboard.add(
-            InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{original_username}"),
-            InlineKeyboardButton("Подключения", callback_data=f"connections_{original_username}"),
-            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}")
-        )
-        keyboard.add(
-            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}")
-        )
+        keyboard.add(InlineKeyboardButton("🔎 IP info", callback_data=f"ip_info_{original_username}"))
+        keyboard.add(InlineKeyboardButton("Подключения", callback_data=f"connections_{original_username}"))
+        keyboard.add(InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}"))
+        keyboard.add(InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}"))
     else:
         # Для обычных пользователей показываем только основные функции
-        keyboard.add(
-            InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}"),
-            InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}")
-        )
-    
-    keyboard.add(
-        InlineKeyboardButton("⬅️ Назад", callback_data="list_users"),
-        InlineKeyboardButton("Домой", callback_data="home")
-    )
+        keyboard.add(InlineKeyboardButton("🔐 Получить конфигурацию", callback_data=f"send_config_{original_username}"))
+        keyboard.add(InlineKeyboardButton("Удалить", callback_data=f"confirm_delete_user_{original_username}"))
+    keyboard.add(InlineKeyboardButton("⬅️ Назад", callback_data="list_users"))
+    keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
 
     user_id = callback_query.from_user.id
     main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
