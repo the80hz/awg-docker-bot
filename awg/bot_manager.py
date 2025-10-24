@@ -15,6 +15,7 @@ import zipfile
 import ipaddress
 import humanize
 import shutil
+import unicodedata
 from aiogram import Bot, types
 from aiogram.dispatcher import Dispatcher
 from aiogram.utils import exceptions as aiogram_exceptions
@@ -29,6 +30,53 @@ from apscheduler.triggers.interval import IntervalTrigger
 from zoneinfo import ZoneInfo
 
 CURRENT_TIMEZONE = ZoneInfo('Europe/Moscow')
+
+MAX_DESCRIPTION_LENGTH = 24
+MAX_CLIENT_NAME_LENGTH = 64
+
+TRANSLIT_MAP = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+    'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'i', 'к': 'k', 'л': 'l', 'м': 'm',
+    'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+    'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
+    'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+}
+
+def slugify_description(value: str, max_length: int = MAX_DESCRIPTION_LENGTH) -> str:
+    text = unicodedata.normalize('NFKD', value or '').lower().strip()
+    if not text:
+        return ''
+    result: list[str] = []
+    for char in text:
+        if char in TRANSLIT_MAP:
+            mapped = TRANSLIT_MAP[char]
+            if mapped:
+                result.append(mapped)
+            continue
+        if char.isalnum():
+            result.append(char)
+            continue
+        if char in {' ', '-', '_', '.', ','}:
+            if result and result[-1] != '-':
+                result.append('-')
+            elif not result:
+                result.append('-')
+    slug = ''.join(result)
+    slug = re.sub(r'-{2,}', '-', slug).strip('-')
+    return slug[:max_length]
+
+def build_client_name(base: str, slug: str) -> str:
+    base = base.strip()
+    if not slug:
+        return base[:MAX_CLIENT_NAME_LENGTH]
+    candidate = f"{base}-{slug}"
+    if len(candidate) <= MAX_CLIENT_NAME_LENGTH:
+        return candidate
+    allowed_slug = max(MAX_CLIENT_NAME_LENGTH - len(base) - 1, 0)
+    if allowed_slug <= 0:
+        return base[:MAX_CLIENT_NAME_LENGTH]
+    trimmed_slug = slug[:allowed_slug]
+    return f"{base}-{trimmed_slug}".rstrip('-')
 
 
 logging.basicConfig(level=logging.INFO)
@@ -535,7 +583,39 @@ async def handle_messages(message: types.Message):
                 )
         
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
-            
+        
+    elif user_state == 'waiting_for_client_description':
+        description = message.text.strip()
+        entry = user_main_messages.get(user_id, {})
+        client_base = entry.get('pending_client_base')
+        server_id = entry.get('server_id') or current_server
+        owner_id = entry.get('pending_owner_id', user_id)
+        if not client_base or not server_id:
+            await message.answer("Не удалось определить параметры клиента. Попробуйте начать заново.", parse_mode="Markdown")
+            entry.pop('state', None)
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
+
+        if description == '-':
+            slug = ''
+        else:
+            slug = slugify_description(description)
+            if description and not slug:
+                await message.answer("Описание может содержать только буквы, цифры и дефисы. Попробуйте снова или отправьте `-`.", parse_mode="Markdown")
+                asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+                return
+
+        client_name = build_client_name(client_base, slug)
+        entry['state'] = None
+        asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+        await finalize_client_creation(
+            user_id=user_id,
+            server_id=server_id,
+            client_name=client_name,
+            owner_id=owner_id,
+            chat_id=message.chat.id
+        )
+        
     else:
         sent_message = await message.reply("Неизвестная команда или действие.")
         asyncio.create_task(delete_message_after_delay(sent_message.chat.id, sent_message.message_id, delay=5))
@@ -549,16 +629,58 @@ async def add_user_start(callback_query: types.CallbackQuery):
         await callback_query.answer("Сервер не выбран, создание конфигурации временно недоступно.", show_alert=True)
         return
 
-    # Генерируем уникальное имя для клиента
-    # Например: username_1687888999
-    client_name = f"{callback_query.from_user.username or user_id}_{int(datetime.now().timestamp())}"
-    
-    # Сразу создаем профиль без выбора длительности и трафика
-    # Сохраняем информацию о владельце профиля
-    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=callback_query.from_user.id, server_id=server_id)
-    
+    client_base = f"{callback_query.from_user.username or user_id}_{int(datetime.now().timestamp())}"
+    entry = user_main_messages.setdefault(user_id, {})
+    entry['pending_client_base'] = client_base
+    entry['pending_owner_id'] = callback_query.from_user.id
+    entry['state'] = 'waiting_for_client_description'
+    entry['server_id'] = server_id
+    if 'chat_id' not in entry or 'message_id' not in entry:
+        entry['chat_id'] = callback_query.message.chat.id
+        entry['message_id'] = callback_query.message.message_id
+
+    prompt_text = (
+        "Введите краткое описание для нового клиента (до 24 латинских символов). "
+        "Можно использовать буквы, цифры и дефисы.\n"
+        "Отправьте `-`, чтобы пропустить."
+    )
+    markup = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("Пропустить", callback_data="skip_client_description"),
+        InlineKeyboardButton("Отмена", callback_data="home")
+    )
+
+    if entry.get('chat_id') and entry.get('message_id'):
+        try:
+            await bot.edit_message_text(
+                chat_id=entry['chat_id'],
+                message_id=entry['message_id'],
+                text=prompt_text,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+        except aiogram_exceptions.MessageNotModified:
+            pass
+    else:
+        sent_message = await bot.send_message(
+            callback_query.message.chat.id,
+            prompt_text,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        entry['chat_id'] = sent_message.chat.id
+        entry['message_id'] = sent_message.message_id
+
+    await callback_query.answer()
+
+async def finalize_client_creation(user_id: int, server_id: str, client_name: str, owner_id: int, chat_id: int):
+    entry = user_main_messages.setdefault(user_id, {})
+    entry.pop('state', None)
+    entry.pop('pending_client_base', None)
+    entry.pop('pending_owner_id', None)
+
+    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=owner_id, server_id=server_id)
     confirmation_text = f"Пользователь *{client_name}* добавлен."
-    
+
     success = db.root_add(client_name, server_id=server_id, ipv6=False)
     if success:
         try:
@@ -577,32 +699,59 @@ async def add_user_start(callback_query: types.CallbackQuery):
             else:
                 caption = "VPN ключ не был сгенерирован."
             if os.path.exists(conf_path):
-                with open(conf_path, 'rb') as config:
-                    # Отправляем в тот же чат, где была нажата кнопка
+                with open(conf_path, 'rb') as config_file:
                     sent_doc = await bot.send_document(
-                        callback_query.message.chat.id,
-                        config,
+                        chat_id,
+                        config_file,
                         caption=caption,
-                        parse_mode="Markdown"
+                        parse_mode="Markdown",
+                        disable_notification=True
                     )
-                    asyncio.create_task(delete_message_after_delay(callback_query.message.chat.id, sent_doc.message_id, delay=300))
+                    asyncio.create_task(delete_message_after_delay(chat_id, sent_doc.message_id, delay=300))
         except Exception as e:
             logger.error(f"Ошибка при отправке конфигурации: {e}")
-            confirmation_text += f"\n⚠️ Ошибка при генерации файла конфигурации."
+            confirmation_text += "\n⚠️ Ошибка при генерации файла конфигурации."
     else:
         confirmation_text = f"❌ Ошибка при создании пользователя *{client_name}*."
 
-    main_message = user_main_messages.get(user_id)
-    if main_message:
-        await bot.edit_message_text(
-            chat_id=main_message['chat_id'],
-            message_id=main_message['message_id'],
-            text=confirmation_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(
-                InlineKeyboardButton("Домой", callback_data="home")
+    entry['client_name'] = client_name
+    main_chat_id = entry.get('chat_id')
+    main_message_id = entry.get('message_id')
+    markup = InlineKeyboardMarkup().add(InlineKeyboardButton("Домой", callback_data="home"))
+    if main_chat_id and main_message_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=main_chat_id,
+                message_id=main_message_id,
+                text=confirmation_text,
+                parse_mode="Markdown",
+                reply_markup=markup
             )
-        )
+        except aiogram_exceptions.MessageNotModified:
+            pass
+    else:
+        await bot.send_message(chat_id, confirmation_text, parse_mode="Markdown", reply_markup=markup)
+
+@dp.callback_query_handler(lambda c: c.data == 'skip_client_description')
+async def skip_client_description(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    entry = user_main_messages.get(user_id, {})
+    client_base = entry.get('pending_client_base')
+    server_id = entry.get('server_id') or current_server
+    owner_id = entry.get('pending_owner_id', user_id)
+    if not client_base or not server_id:
+        await callback_query.answer("Нет активного создания клиента.", show_alert=True)
+        return
+
+    client_name = build_client_name(client_base, '')
+    entry['state'] = None
+    await finalize_client_creation(
+        user_id=user_id,
+        server_id=server_id,
+        client_name=client_name,
+        owner_id=owner_id,
+        chat_id=callback_query.message.chat.id
+    )
     await callback_query.answer()
 
 def parse_traffic_limit(traffic_limit: str) -> int:
