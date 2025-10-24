@@ -3,9 +3,6 @@ import struct
 import zlib
 import base64
 import argparse
-import socket
-import ipaddress
-import re
 
 def qCompress(data, level=-1):
     compressed = zlib.compress(data, level)
@@ -34,39 +31,8 @@ def base64url_decode(data):
     data += b'=' * padding_needed
     return base64.urlsafe_b64decode(data)
 
-def is_ip_address(address):
-    try:
-        ipaddress.ip_address(address)
-        return True
-    except ValueError:
-        return False
-
-def resolve_dns_to_ip(dns_name):
-    try:
-        ip_address = socket.gethostbyname(dns_name)
-        return ip_address
-    except socket.gaierror:
-        return None
-
 def process_conf_data(data):
-    def replace_endpoint(match):
-        full_line = match.group(0)
-        prefix = match.group(1)
-        address = match.group(2)
-        port = match.group(3)
-        suffix = match.group(4)
-        if not is_ip_address(address):
-            resolved_ip = resolve_dns_to_ip(address)
-            if resolved_ip:
-                print(f"Resolved DNS '{address}' to IP '{resolved_ip}'", file=sys.stderr)
-                return f"{prefix}{resolved_ip}:{port}{suffix}"
-            else:
-                print(f"Error: Could not resolve DNS name '{address}'", file=sys.stderr)
-                sys.exit(1)
-        else:
-            return full_line
-    pattern = r'^(.*Endpoint\s*=\s*)([^\s:]+)(?::(\d+))(.*)$'
-    return re.sub(pattern, replace_endpoint, data, flags=re.MULTILINE)
+    return data
 
 def encode(data):
     data_bytes = data.encode('utf-8')
