@@ -14,9 +14,61 @@ import shutil
 import bcrypt
 from datetime import datetime, timedelta
 
-EXPIRATIONS_FILE = 'files/expirations.json'
-SERVERS_FILE = 'files/servers.json'
+DATA_DIR = 'data'
+SERVERS_ROOT = os.path.join(DATA_DIR, 'servers')
+PROFILES_ROOT = os.path.join(DATA_DIR, 'profiles')
+GLOBAL_CONFIG_PATH = os.path.join(DATA_DIR, 'setting.ini')
+EXPIRATIONS_FILE = os.path.join(DATA_DIR, 'expirations.json')
+SERVERS_FILE = os.path.join(DATA_DIR, 'servers.json')
 UTC = pytz.UTC
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(SERVERS_ROOT, exist_ok=True)
+os.makedirs(PROFILES_ROOT, exist_ok=True)
+
+def _move_if_exists(src, dst):
+    if os.path.exists(src) and not os.path.exists(dst):
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        try:
+            shutil.move(src, dst)
+        except Exception as exc:
+            logging.getLogger(__name__).error(f"Не удалось перенести {src} в {dst}: {exc}")
+
+def _migrate_legacy_layout():
+    _move_if_exists(os.path.join('files', 'setting.ini'), GLOBAL_CONFIG_PATH)
+    _move_if_exists(os.path.join('files', 'servers.json'), SERVERS_FILE)
+    _move_if_exists(os.path.join('files', 'expirations.json'), EXPIRATIONS_FILE)
+    _move_if_exists(os.path.join('files', 'isp_cache.json'), os.path.join(DATA_DIR, 'isp_cache.json'))
+
+_migrate_legacy_layout()
+
+def _default_owner_slug(client_name):
+    if not client_name:
+        return 'client'
+    return client_name.split('-', 1)[0] if '-' in client_name else client_name
+
+def server_storage_dir(server_id):
+    path = os.path.join(SERVERS_ROOT, str(server_id))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def profile_owner_dir(server_id, owner_slug):
+    path = os.path.join(PROFILES_ROOT, str(server_id), owner_slug)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def profile_dir(server_id, client_name, owner_slug=None, ensure=True):
+    owner = owner_slug or resolve_owner_slug(client_name, server_id)
+    if not owner:
+        owner = _default_owner_slug(client_name)
+    path = os.path.join(PROFILES_ROOT, str(server_id), owner, client_name)
+    if ensure:
+        os.makedirs(path, exist_ok=True)
+    return path
+
+def profile_file_path(server_id, client_name, filename, owner_slug=None, ensure=True):
+    base = profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=ensure)
+    return os.path.join(base, filename)
 
 def is_ip_address(value):
     if not value:
@@ -114,20 +166,19 @@ def remove_server(server_id):
         del servers[server_id]
         save_servers(servers)
 
-        pwd = os.getcwd()
-        users_dir = f"{pwd}/users"
-        if os.path.exists(users_dir):
-            for user_dir in os.listdir(users_dir):
-                user_path = os.path.join(users_dir, user_dir)
-                if os.path.isdir(user_path):
-                    try:
-                        for file in os.listdir(user_path):
-                            file_path = os.path.join(user_path, file)
-                            if os.path.isfile(file_path):
-                                os.remove(file_path)
-                        os.rmdir(user_path)
-                    except Exception as e:
-                        logger.error(f"Ошибка при удалении файлов пользователя {user_dir}: {e}")
+        profiles_dir = os.path.join(PROFILES_ROOT, str(server_id))
+        if os.path.exists(profiles_dir):
+            try:
+                shutil.rmtree(profiles_dir)
+            except Exception as e:
+                logger.error(f"Ошибка при удалении профилей сервера {server_id}: {e}")
+
+        server_storage = os.path.join(SERVERS_ROOT, str(server_id))
+        if os.path.exists(server_storage):
+            try:
+                shutil.rmtree(server_storage)
+            except Exception as e:
+                logger.error(f"Ошибка при удалении данных сервера {server_id}: {e}")
 
         return True
     except Exception as e:
@@ -312,7 +363,7 @@ def get_amnezia_container():
         logger.error(f"Ошибка при поиске контейнера: {e}")
         exit(1)
 
-def create_config(path='files/setting.ini', servers_list=None):
+def create_config(path=GLOBAL_CONFIG_PATH, servers_list=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     config = configparser.ConfigParser()
     config.add_section("setting")
@@ -568,7 +619,7 @@ def create_config(path='files/setting.ini', servers_list=None):
     logger.info(f"Конфигурация сохранена в {path}")
     return True
 
-def get_config(path='files/setting.ini', server_id=None):
+def get_config(path=GLOBAL_CONFIG_PATH, server_id=None):
     if server_id:
         servers = load_servers()
         if server_id in servers:
@@ -770,7 +821,7 @@ def get_active_list(server_id=None):
         logger.error(f"Error getting active list: {e}")
         return []
 
-def root_add(id_user, server_id=None, ipv6=False):
+def root_add(id_user, server_id=None, ipv6=False, owner_slug=None):
     if server_id is None:
         return False
     setting = get_config(server_id=server_id)
@@ -779,21 +830,22 @@ def root_add(id_user, server_id=None, ipv6=False):
     docker_container = setting['docker_container']
     is_remote = setting.get('is_remote') == 'true'
 
+    owner_slug = owner_slug or resolve_owner_slug(id_user, server_id)
+
     clients = get_client_list(server_id=server_id)
     client_entry = next((c for c in clients if c[0] == id_user), None)
     if client_entry:
         logger.info(f"Пользователь {id_user} уже существует.")
         return False
 
-    pwd = os.getcwd()
-    os.makedirs(f"{pwd}/users/{id_user}", exist_ok=True)
-    os.makedirs(f"{pwd}/files", exist_ok=True)
+    profile_path = profile_dir(server_id, id_user, owner_slug=owner_slug)
+    server_dir_path = server_storage_dir(server_id)
 
     if is_remote:
         try:
             servers = load_servers()
             server_config = servers.get(server_id, {})
-            
+
             if server_id in SSHManager._instances and hasattr(SSHManager._instances[server_id], '_original_password'):
                 ssh = SSHManager._instances[server_id]
             else:
@@ -829,7 +881,7 @@ def root_add(id_user, server_id=None, ipv6=False):
                 return False
             psk = output.strip()
 
-            server_conf_path = f"{pwd}/files/server.conf"
+            server_conf_path = os.path.join(server_dir_path, 'server.conf')
             output, error = ssh.execute_command(f"docker exec -i {docker_container} cat {wg_config_file}")
             if error:
                 logger.error(f"Ошибка получения конфигурации сервера: {error}")
@@ -893,7 +945,7 @@ AllowedIPs = 0.0.0.0/0
 Endpoint = {endpoint}:{listen_port}
 PersistentKeepalive = 25"""
 
-            client_config_path = f"{pwd}/users/{id_user}/{id_user}.conf"
+            client_config_path = os.path.join(profile_path, f"{id_user}.conf")
             with open(client_config_path, 'w') as f:
                 f.write(client_config)
 
@@ -932,7 +984,7 @@ AllowedIPs = {client_ip}
                 }
             })
 
-            clients_table_path = f"{pwd}/files/clientsTable"
+            clients_table_path = os.path.join(server_dir_path, 'clientsTable')
             with open(clients_table_path, 'w') as f:
                 json.dump(clients_table, f)
 
@@ -941,7 +993,7 @@ AllowedIPs = {client_ip}
             ssh.execute_command("rm /tmp/clientsTable")
             sftp.close()
 
-            traffic_file = f"{pwd}/users/{id_user}/traffic.json"
+            traffic_file = os.path.join(profile_path, 'traffic.json')
             with open(traffic_file, 'w') as f:
                 json.dump({
                     "total_incoming": 0,
@@ -956,7 +1008,15 @@ AllowedIPs = {client_ip}
             logger.error(f"Ошибка при добавлении пользователя через SSH: {e}")
             return False
     else:
-        cmd = ["awg/newclient.sh", id_user, endpoint, wg_config_file, docker_container]
+        cmd = [
+            "awg/newclient.sh",
+            id_user,
+            endpoint,
+            wg_config_file,
+            docker_container,
+            server_id,
+            owner_slug or _default_owner_slug(id_user)
+        ]
         if subprocess.call(cmd) == 0:
             return True
         return False
@@ -976,7 +1036,8 @@ def deactive_user_db(client_name, server_id=None):
         return False
 
     client_public_key = client_entry[1]
-    pwd = os.getcwd()
+    owner_slug = resolve_owner_slug(client_name, server_id)
+    profile_path = profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=False)
 
     if is_remote:
         try:
@@ -1075,16 +1136,8 @@ def deactive_user_db(client_name, server_id=None):
                 logger.error(f"Ошибка обновления clientsTable: {e}")
 
             try:
-                user_dir = f"{pwd}/users/{client_name}"
-                user_conf = f"{user_dir}/{client_name}.conf"
-                traffic_file = f"{user_dir}/traffic.json"
-                
-                for file in [user_conf, traffic_file]:
-                    if os.path.exists(file):
-                        os.remove(file)
-                
-                if os.path.exists(user_dir):
-                    shutil.rmtree(user_dir)
+                if profile_path and os.path.exists(profile_path):
+                    shutil.rmtree(profile_path)
             except Exception as e:
                 logger.error(f"Ошибка удаления локальных файлов: {e}")
 
@@ -1094,7 +1147,16 @@ def deactive_user_db(client_name, server_id=None):
             logger.error(f"Ошибка при удалении пользователя через SSH: {e}")
             return False
     else:
-        if subprocess.call(["awg/removeclient.sh", client_name, client_public_key, wg_config_file, docker_container]) == 0:
+        cmd = [
+            "awg/removeclient.sh",
+            client_name,
+            client_public_key,
+            wg_config_file,
+            docker_container,
+            server_id,
+            owner_slug or _default_owner_slug(client_name)
+        ]
+        if subprocess.call(cmd) == 0:
             return True
         return False
 
@@ -1122,6 +1184,8 @@ def load_expirations():
                         data[user][server_id]['expiration_time'] = datetime.fromisoformat(info['expiration_time']).replace(tzinfo=UTC)
                     else:
                         data[user][server_id]['expiration_time'] = None
+                    owner_slug = info.get('owner_slug') or _default_owner_slug(user)
+                    data[user][server_id]['owner_slug'] = owner_slug
             return data
         except json.JSONDecodeError:
             logger.error("Ошибка при загрузке expirations.json.")
@@ -1136,12 +1200,13 @@ def save_expirations(expirations):
             data[user][server_id] = {
                 'expiration_time': info['expiration_time'].isoformat() if info['expiration_time'] else None,
                 'traffic_limit': info.get('traffic_limit', "Неограниченно"),
-                'owner_id': info.get('owner_id')
+                'owner_id': info.get('owner_id'),
+                'owner_slug': info.get('owner_slug')
             }
     with open(EXPIRATIONS_FILE, 'w') as f:
         json.dump(data, f)
 
-def set_user_expiration(username: str, expiration = None, traffic_limit = "Неограниченно", owner_id = None, server_id = None):
+def set_user_expiration(username: str, expiration = None, traffic_limit = "Неограниченно", owner_id = None, server_id = None, owner_slug: str = None):
     if server_id is None:
         return
     expirations = load_expirations()
@@ -1157,7 +1222,22 @@ def set_user_expiration(username: str, expiration = None, traffic_limit = "Не�
         expirations[username][server_id]['expiration_time'] = None
     expirations[username][server_id]['traffic_limit'] = traffic_limit
     expirations[username][server_id]['owner_id'] = owner_id
+    if owner_slug:
+        expirations[username][server_id]['owner_slug'] = owner_slug
     save_expirations(expirations)
+
+def resolve_owner_slug(client_name, server_id=None):
+    expirations = load_expirations()
+    if client_name in expirations:
+        if server_id and server_id in expirations[client_name]:
+            slug = expirations[client_name][server_id].get('owner_slug')
+            if slug:
+                return slug
+        for entry in expirations[client_name].values():
+            slug = entry.get('owner_slug')
+            if slug:
+                return slug
+    return _default_owner_slug(client_name)
 
 def remove_user_expiration(username: str, server_id: str = None):
     if server_id is None:

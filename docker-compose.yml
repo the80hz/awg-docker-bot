@@ -6,8 +6,7 @@ services:
     environment:
       - TZ=Europe/Moscow
     volumes:
-      - ./users:/app/users
-      - ./files:/app/files
+      - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     # Если нужен доступ к другим скриптам/файлам, добавьте volume
     # - ./awg:/app/awg

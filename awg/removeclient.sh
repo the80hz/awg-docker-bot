@@ -2,8 +2,8 @@
 
 set -e
 
-if [ "$#" -ne 4 ]; then
-    echo "Usage: $0 CLIENT_NAME CLIENT_PUBLIC_KEY WG_CONFIG_FILE DOCKER_CONTAINER"
+if [ "$#" -lt 6 ]; then
+    echo "Usage: $0 CLIENT_NAME CLIENT_PUBLIC_KEY WG_CONFIG_FILE DOCKER_CONTAINER SERVER_ID OWNER_SLUG"
     exit 1
 fi
 
@@ -11,10 +11,24 @@ CLIENT_NAME="$1"
 CLIENT_PUBLIC_KEY="$2"
 WG_CONFIG_FILE="$3"
 DOCKER_CONTAINER="$4"
+SERVER_ID="$5"
+OWNER_SLUG="$6"
+
+if [ -z "$OWNER_SLUG" ]; then
+    OWNER_SLUG="$CLIENT_NAME"
+fi
 
 pwd=$(pwd)
-mkdir -p "$pwd/files"
-SERVER_CONF_PATH="$pwd/files/server.conf"
+DATA_DIR="$pwd/data"
+SERVER_DATA_DIR="$DATA_DIR/servers/$SERVER_ID"
+PROFILE_DIR="$DATA_DIR/profiles/$SERVER_ID/$OWNER_SLUG/$CLIENT_NAME"
+
+mkdir -p "$SERVER_DATA_DIR"
+
+SERVER_CONF_PATH="$SERVER_DATA_DIR/server.conf"
+CLIENTS_TABLE_PATH="$SERVER_DATA_DIR/clientsTable"
+CLIENT_CONFIG_PATH="$PROFILE_DIR/$CLIENT_NAME.conf"
+TRAFFIC_FILE="$PROFILE_DIR/traffic.json"
 
 docker exec -i "$DOCKER_CONTAINER" cat "$WG_CONFIG_FILE" > "$SERVER_CONF_PATH"
 
@@ -74,10 +88,22 @@ docker cp "$SERVER_CONF_PATH" "$DOCKER_CONTAINER":"$WG_CONFIG_FILE"
 
 docker exec -i "$DOCKER_CONTAINER" sh -c "wg-quick down '$WG_CONFIG_FILE' && wg-quick up '$WG_CONFIG_FILE'"
 
-rm -f "users/$CLIENT_NAME/$CLIENT_NAME.conf"
-rmdir "users/$CLIENT_NAME" 2>/dev/null || true
+rm -f "$CLIENT_CONFIG_PATH"
+rm -f "$TRAFFIC_FILE"
+if [ -d "$PROFILE_DIR" ]; then
+    rmdir "$PROFILE_DIR" 2>/dev/null || true
+fi
 
-CLIENTS_TABLE_PATH="$pwd/files/clientsTable"
+OWNER_DIR="$DATA_DIR/profiles/$SERVER_ID/$OWNER_SLUG"
+if [ -d "$OWNER_DIR" ]; then
+    rmdir "$OWNER_DIR" 2>/dev/null || true
+fi
+
+SERVER_PROFILE_DIR="$DATA_DIR/profiles/$SERVER_ID"
+if [ -d "$SERVER_PROFILE_DIR" ]; then
+    rmdir "$SERVER_PROFILE_DIR" 2>/dev/null || true
+fi
+
 docker exec -i "$DOCKER_CONTAINER" cat /opt/amnezia/awg/clientsTable > "$CLIENTS_TABLE_PATH" || echo "[]" > "$CLIENTS_TABLE_PATH"
 
 if [ -f "$CLIENTS_TABLE_PATH" ]; then
@@ -85,8 +111,5 @@ if [ -f "$CLIENTS_TABLE_PATH" ]; then
     mv "$CLIENTS_TABLE_PATH.tmp" "$CLIENTS_TABLE_PATH"
     docker cp "$CLIENTS_TABLE_PATH" "$DOCKER_CONTAINER":/opt/amnezia/awg/clientsTable
 fi
-
-traffic_file="$pwd/users/$CLIENT_NAME/traffic.json"
-rm -f "$traffic_file"
 
 echo "Client $CLIENT_NAME успешно удален из WireGuard"

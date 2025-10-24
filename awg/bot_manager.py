@@ -140,6 +140,22 @@ def generate_client_name(base: str, slug: str, existing: set[str]) -> str:
         return ensure_unique_slugged_name(base, slug, existing)
     return next_sequential_name(base, existing)
 
+def get_owner_slug(client_name, server_id):
+    return db.resolve_owner_slug(client_name, server_id=server_id)
+
+def get_profile_dir(server_id, client_name, ensure=True):
+    owner_slug = get_owner_slug(client_name, server_id)
+    path = db.profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=ensure)
+    return path, owner_slug
+
+def profile_file(server_id, client_name, filename, ensure=True):
+    owner_slug = get_owner_slug(client_name, server_id)
+    return db.profile_file_path(server_id, client_name, filename, owner_slug=owner_slug, ensure=ensure)
+
+DATA_DIR = 'data'
+SERVERS_ROOT = os.path.join(DATA_DIR, 'servers')
+PROFILES_ROOT = os.path.join(DATA_DIR, 'profiles')
+ISP_CACHE_FILE = os.path.join(DATA_DIR, 'isp_cache.json')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -260,7 +276,6 @@ current_server = None
 user_state = {}
 user_main_messages = {}
 isp_cache = {}
-ISP_CACHE_FILE = 'files/isp_cache.json'
 CACHE_TTL = timedelta(hours=24)
 
 def get_interface_name():
@@ -318,9 +333,12 @@ async def cleanup_isp_cache():
             del isp_cache[ip]
     await save_isp_cache()
 
-async def cleanup_connection_data(username: str):
-    file_path = os.path.join('files', 'connections', f'{username}_ip.json')
-    if os.path.exists(file_path):
+async def cleanup_connection_data(username: str, server_id = None):
+    server = server_id or current_server
+    if not server:
+        return
+    file_path = profile_file(server, username, 'connections.json', ensure=False)
+    if file_path and os.path.exists(file_path):
         async with aiofiles.open(file_path, 'r') as f:
             try:
                 data = json.loads(await f.read())
@@ -340,12 +358,7 @@ def create_zip(backup_filepath):
         for main_file in ['awg/awg-decode.py', 'awg/newclient.sh', 'awg/removeclient.sh']:
             if os.path.exists(main_file):
                 zipf.write(main_file, main_file)
-        for root, dirs, files in os.walk('files'):
-            for file in files:
-                filepath = os.path.join(root, file)
-                arcname = os.path.relpath(filepath, os.getcwd())
-                zipf.write(filepath, arcname)
-        for root, dirs, files in os.walk('users'):
+        for root, dirs, files in os.walk(DATA_DIR):
             for file in files:
                 filepath = os.path.join(root, file)
                 arcname = os.path.relpath(filepath, os.getcwd())
@@ -755,22 +768,26 @@ async def finalize_client_creation(user_id: int, server_id: str, owner_id: int, 
         client[0] for client in existing_clients
         if isinstance(client, (list, tuple)) and client
     }
-    users_path = os.path.join(os.getcwd(), 'users')
-    if os.path.isdir(users_path):
-        existing_names.update(
-            name for name in os.listdir(users_path)
-            if isinstance(name, str)
-        )
+    server_profiles_dir = os.path.join(PROFILES_ROOT, str(server_id))
+    if os.path.isdir(server_profiles_dir):
+        for owner_dir_name in os.listdir(server_profiles_dir):
+            owner_path = os.path.join(server_profiles_dir, owner_dir_name)
+            if not os.path.isdir(owner_path):
+                continue
+            existing_names.update(
+                name for name in os.listdir(owner_path)
+                if isinstance(name, str) and os.path.isdir(os.path.join(owner_path, name))
+            )
 
     client_name = generate_client_name(base, slug, existing_names)
 
-    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=owner_id, server_id=server_id)
+    db.set_user_expiration(client_name, None, "Неограниченно", owner_id=owner_id, server_id=server_id, owner_slug=base)
     confirmation_text = f"Пользователь *{client_name}* добавлен."
 
-    success = db.root_add(client_name, server_id=server_id, ipv6=False)
+    success = db.root_add(client_name, server_id=server_id, ipv6=False, owner_slug=base)
     if success:
         try:
-            conf_path = os.path.join('users', client_name, f'{client_name}.conf')
+            conf_path = profile_file(server_id, client_name, f'{client_name}.conf')
             vpn_key = ""
             if os.path.exists(conf_path):
                 vpn_key = await generate_vpn_key(conf_path)
@@ -918,7 +935,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
                 incoming_bytes, outgoing_bytes = parse_transfer(transfer)
                 incoming_traffic = f"↓{humanize_bytes(incoming_bytes)}"
                 outgoing_traffic = f"↑{humanize_bytes(outgoing_bytes)}"
-                traffic_data = await update_traffic(username, incoming_bytes, outgoing_bytes)
+                traffic_data = await update_traffic(username, incoming_bytes, outgoing_bytes, server_id)
                 total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
                 formatted_total = humanize_bytes(total_bytes)
 
@@ -935,7 +952,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
                 logger.error(f"Некорректный формат даты для пользователя {username}: {last_handshake_str}")
                 status = "🔴 Offline"
     else:
-        traffic_data = await read_traffic(username)
+        traffic_data = await read_traffic(username, server_id)
         total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
         formatted_total = humanize_bytes(total_bytes)
         last_handshake_str = None
@@ -1181,8 +1198,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
     _, username = callback_query.data.split('connections_', 1)
     username = username.strip()
     original_username = username
-    file_path = os.path.join('files', 'connections', f'{username}_ip.json')
-    os.makedirs(os.path.join('files', 'connections'), exist_ok=True)
+    file_path = profile_file(server_id, username, 'connections.json')
     try:
         active_clients = db.get_active_list(server_id=server_id)
         active_info = next((client for client in active_clients if isinstance(client, dict) and client.get('name') == username), None)
@@ -1392,16 +1408,16 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
             scheduler.remove_job(job_id=username)
         except:
             pass
-        user_dir = os.path.join('users', username)
+        profile_path, _ = get_profile_dir(effective_server_id, username, ensure=False)
         try:
-            if os.path.exists(user_dir):
-                shutil.rmtree(user_dir)
+            if profile_path and os.path.exists(profile_path):
+                shutil.rmtree(profile_path)
         except Exception as e:
             logger.error(f"Ошибка при удалении директории для пользователя {username}: {e}")
-            
-        connections_file = os.path.join('files', 'connections', f'{username}_ip.json')
+
+        connections_file = profile_file(effective_server_id, username, 'connections.json', ensure=False)
         try:
-            if os.path.exists(connections_file):
+            if connections_file and os.path.exists(connections_file):
                 os.remove(connections_file)
         except Exception as e:
             logger.error(f"Ошибка при удалении файла подключений для пользователя {username}: {e}")
@@ -1712,9 +1728,8 @@ async def send_user_config(callback_query: types.CallbackQuery):
 
     sent_messages = []
     try:
-        user_dir = os.path.join('users', username)
-        conf_path = os.path.join(user_dir, f'{username}.conf')
-        if not os.path.exists(conf_path):
+        conf_path = profile_file(current_server, username, f'{username}.conf', ensure=False)
+        if not conf_path or not os.path.exists(conf_path):
             await callback_query.answer("Конфигурационный файл пользователя отсутствует. Возможно, пользователь был создан вручную, и его конфигурация недоступна.", show_alert=True)
             return
         if os.path.exists(conf_path):
@@ -1811,13 +1826,13 @@ async def send_user_config(callback_query: types.CallbackQuery):
                     incoming_bytes, outgoing_bytes = parse_transfer(transfer)
                     incoming_traffic = f"↓{humanize_bytes(incoming_bytes)}"
                     outgoing_traffic = f"↑{humanize_bytes(outgoing_bytes)}"
-                    traffic_data = await update_traffic(username, incoming_bytes, outgoing_bytes)
+                    traffic_data = await update_traffic(username, incoming_bytes, outgoing_bytes, server_id)
                     total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
                     formatted_total = humanize_bytes(total_bytes)
                 except ValueError:
                     logger.error(f"Некорректный формат даты для пользователя {username}: {last_handshake_str}")
         else:
-            traffic_data = await read_traffic(username)
+            traffic_data = await read_traffic(username, server_id)
             total_bytes = traffic_data.get('total_incoming', 0) + traffic_data.get('total_outgoing', 0)
             formatted_total = humanize_bytes(total_bytes)
             last_handshake_str = None
@@ -1988,9 +2003,8 @@ def parse_transfer(transfer_str):
 def humanize_bytes(bytes_value):
     return humanize.naturalsize(bytes_value, binary=False)
 
-async def read_traffic(username, server_id='default'):
-    traffic_file = os.path.join('users', username, f'traffic_{server_id}.json')
-    os.makedirs(os.path.dirname(traffic_file), exist_ok=True)
+async def read_traffic(username, server_id):
+    traffic_file = profile_file(server_id, username, 'traffic.json')
     if not os.path.exists(traffic_file):
         traffic_data = {
             "total_incoming": 0,
@@ -2019,7 +2033,7 @@ async def read_traffic(username, server_id='default'):
                     await f_write.write(json.dumps(traffic_data))
                 return traffic_data
 
-async def update_traffic(username, incoming_bytes, outgoing_bytes, server_id='default'):
+async def update_traffic(username, incoming_bytes, outgoing_bytes, server_id):
     traffic_data = await read_traffic(username, server_id)
     delta_incoming = incoming_bytes - traffic_data.get('last_incoming', 0)
     delta_outgoing = outgoing_bytes - traffic_data.get('last_outgoing', 0)
@@ -2031,7 +2045,7 @@ async def update_traffic(username, incoming_bytes, outgoing_bytes, server_id='de
     traffic_data['total_outgoing'] += delta_outgoing
     traffic_data['last_incoming'] = incoming_bytes
     traffic_data['last_outgoing'] = outgoing_bytes
-    traffic_file = os.path.join('users', username, f'traffic_{server_id}.json')
+    traffic_file = profile_file(server_id, username, 'traffic.json')
     async with aiofiles.open(traffic_file, 'w') as f:
         await f.write(json.dumps(traffic_data))
     return traffic_data
@@ -2089,16 +2103,16 @@ async def deactivate_user(client_name: str):
             scheduler.remove_job(job_id=client_name)
         except:
             pass
-        user_dir = os.path.join('users', client_name)
+        profile_path, _ = get_profile_dir(current_server, client_name, ensure=False)
         try:
-            if os.path.exists(user_dir):
-                shutil.rmtree(user_dir)
+            if profile_path and os.path.exists(profile_path):
+                shutil.rmtree(profile_path)
         except Exception as e:
             logger.error(f"Ошибка при удалении директории для пользователя {client_name}: {e}")
-            
-        connections_file = os.path.join('files', 'connections', f'{client_name}_ip.json')
+
+        connections_file = profile_file(current_server, client_name, 'connections.json', ensure=False)
         try:
-            if os.path.exists(connections_file):
+            if connections_file and os.path.exists(connections_file):
                 os.remove(connections_file)
         except Exception as e:
             logger.error(f"Ошибка при удалении файла подключений для пользователя {client_name}: {e}")
@@ -2161,8 +2175,9 @@ async def periodic_ensure_peer_names():
     db.ensure_peer_names(server_id=current_server)
 
 async def on_startup(dp):
-    os.makedirs('files/connections', exist_ok=True)
-    os.makedirs('users', exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(SERVERS_ROOT, exist_ok=True)
+    os.makedirs(PROFILES_ROOT, exist_ok=True)
     await load_isp_cache_task()
     
     global current_server

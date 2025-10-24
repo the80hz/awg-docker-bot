@@ -267,7 +267,7 @@ initialize_bot() {
     ../myenv/bin/python3.11 bot_manager.py < /dev/tty &
     local BOT_PID=$!
     
-    while [ ! -f "files/setting.ini" ]; do
+    while [ ! -f "data/setting.ini" ]; do
         sleep 2
         kill -0 "$BOT_PID" 2>/dev/null || { echo -e "\n${RED}Бот завершил работу до инициализации${NC}"; exit 1; }
     done
