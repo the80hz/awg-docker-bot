@@ -706,9 +706,9 @@ async def add_user_start(callback_query: types.CallbackQuery):
         entry['message_id'] = callback_query.message.message_id
 
     prompt_text = (
-        "Введите краткое описание для нового клиента (до 24 латинских символов). "
-        "Можно использовать буквы, цифры и дефисы.\n"
-        "Отправьте `-`, чтобы пропустить."
+        f"*Текущая основа имени:* `{client_base}`\n\n"
+        "Введите краткое описание (до 24 латинских символов). "
+        "Можно использовать буквы, цифры и дефисы."
     )
     markup = InlineKeyboardMarkup().add(
         InlineKeyboardButton("Пропустить", callback_data="skip_client_description"),
