@@ -18,6 +18,15 @@ EXPIRATIONS_FILE = 'files/expirations.json'
 SERVERS_FILE = 'files/servers.json'
 UTC = pytz.UTC
 
+def is_ip_address(value):
+    if not value:
+        return False
+    try:
+        socket.inet_aton(value)
+        return True
+    except socket.error:
+        return False
+
 def load_servers():
     if not os.path.exists(SERVERS_FILE):
         return {}
@@ -39,7 +48,7 @@ def verify_password(password, hashed):
         return False
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
-def add_server(server_id, host, port, username, auth_type, password=None, key_path=None):
+def add_server(server_id, host, port, username, auth_type, password=None, key_path=None, endpoint=None):
     servers = load_servers()
     server_config = {
         'host': host,
@@ -51,7 +60,7 @@ def add_server(server_id, host, port, username, auth_type, password=None, key_pa
         'key_path': key_path if auth_type == 'key' else None,
         'docker_container': 'amnezia-awg',
         'wg_config_file': '/opt/amnezia/awg/wg0.conf',
-        'endpoint': None,
+        'endpoint': endpoint or (host if host else None),
         'is_remote': 'true'
     }
     servers[server_id] = server_config
@@ -68,11 +77,14 @@ def add_server(server_id, host, port, username, auth_type, password=None, key_pa
             key_path=key_path
         )
         if ssh.connect():
-            output, error = ssh.execute_command("curl -s https://api.ipify.org")
-            if output and not error:
-                server_config['endpoint'] = output.strip()
-                servers[server_id] = server_config
-                save_servers(servers)
+            should_update_endpoint = endpoint is None and is_ip_address(host)
+            if should_update_endpoint:
+                output, error = ssh.execute_command("curl -s https://api.ipify.org")
+                detected_endpoint = output.strip() if output and not error else None
+                if detected_endpoint:
+                    server_config['endpoint'] = detected_endpoint
+                    servers[server_id] = server_config
+                    save_servers(servers)
     except Exception as e:
         logger.error(f"Не удалось получить endpoint для сервера {server_id}: {e}")
     
@@ -363,7 +375,8 @@ def create_config(path='files/setting.ini', servers_list=None):
                     username,
                     auth_type,
                     password=password,
-                    key_path=key_path
+                    key_path=key_path,
+                    endpoint=endpoint
                 )
                 
                 if not server_config:
@@ -537,7 +550,8 @@ def create_config(path='files/setting.ini', servers_list=None):
                     server['username'],
                     server['auth_type'],
                     password=server.get('password'),
-                    key_path=server.get('key_path')
+                    key_path=server.get('key_path'),
+                    endpoint=server.get('endpoint')
                 )
             else:
                 servers = load_servers()
