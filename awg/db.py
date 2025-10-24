@@ -42,6 +42,18 @@ def _migrate_legacy_layout():
 
 _migrate_legacy_layout()
 
+def find_existing_profile_dir(server_id, client_name):
+    server_path = os.path.join(PROFILES_ROOT, str(server_id))
+    if not os.path.isdir(server_path):
+        return None, None
+    for owner_entry in os.scandir(server_path):
+        if not owner_entry.is_dir():
+            continue
+        candidate = os.path.join(owner_entry.path, client_name)
+        if os.path.isdir(candidate):
+            return candidate, owner_entry.name
+    return None, None
+
 def _default_owner_slug(client_name):
     if not client_name:
         return 'client'
@@ -58,6 +70,10 @@ def profile_owner_dir(server_id, owner_slug):
     return path
 
 def profile_dir(server_id, client_name, owner_slug=None, ensure=True):
+    if not ensure:
+        existing_path, _ = find_existing_profile_dir(server_id, client_name)
+        if existing_path:
+            return existing_path
     owner = owner_slug or resolve_owner_slug(client_name, server_id)
     if not owner:
         owner = _default_owner_slug(client_name)
@@ -69,6 +85,40 @@ def profile_dir(server_id, client_name, owner_slug=None, ensure=True):
 def profile_file_path(server_id, client_name, filename, owner_slug=None, ensure=True):
     base = profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=ensure)
     return os.path.join(base, filename)
+
+def list_local_profiles(server_id):
+    result = set()
+    server_path = os.path.join(PROFILES_ROOT, str(server_id))
+    if not os.path.isdir(server_path):
+        return result
+    for owner_entry in os.scandir(server_path):
+        if not owner_entry.is_dir():
+            continue
+        for profile_entry in os.scandir(owner_entry.path):
+            if profile_entry.is_dir():
+                result.add(profile_entry.name)
+    return result
+
+def _cleanup_empty_profile_dirs(server_id, owner_slug=None):
+    server_path = os.path.join(PROFILES_ROOT, str(server_id))
+    if owner_slug:
+        owner_path = os.path.join(server_path, owner_slug)
+        if os.path.isdir(owner_path) and not any(os.scandir(owner_path)):
+            os.rmdir(owner_path)
+    if os.path.isdir(server_path) and not any(os.scandir(server_path)):
+        os.rmdir(server_path)
+
+def cleanup_local_profile(client_name, server_id, remove_expiration=False):
+    try:
+        profile_path, owner_slug = find_existing_profile_dir(server_id, client_name)
+        if profile_path and os.path.isdir(profile_path):
+            shutil.rmtree(profile_path, ignore_errors=True)
+            if owner_slug:
+                _cleanup_empty_profile_dirs(server_id, owner_slug)
+        if remove_expiration:
+            remove_user_expiration(client_name, server_id=server_id)
+    except Exception as exc:
+        logger.error(f"Ошибка при очистке локальных данных профиля {client_name} на сервере {server_id}: {exc}")
 
 def is_ip_address(value):
     if not value:
@@ -1037,7 +1087,6 @@ def deactive_user_db(client_name, server_id=None):
 
     client_public_key = client_entry[1]
     owner_slug = resolve_owner_slug(client_name, server_id)
-    profile_path = profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=False)
 
     if is_remote:
         try:
@@ -1135,12 +1184,7 @@ def deactive_user_db(client_name, server_id=None):
             except Exception as e:
                 logger.error(f"Ошибка обновления clientsTable: {e}")
 
-            try:
-                if profile_path and os.path.exists(profile_path):
-                    shutil.rmtree(profile_path)
-            except Exception as e:
-                logger.error(f"Ошибка удаления локальных файлов: {e}")
-
+            cleanup_local_profile(client_name, server_id)
             return True
 
         except Exception as e:
@@ -1157,6 +1201,7 @@ def deactive_user_db(client_name, server_id=None):
             owner_slug or _default_owner_slug(client_name)
         ]
         if subprocess.call(cmd) == 0:
+            cleanup_local_profile(client_name, server_id)
             return True
         return False
 
@@ -1237,6 +1282,10 @@ def resolve_owner_slug(client_name, server_id=None):
             slug = entry.get('owner_slug')
             if slug:
                 return slug
+    if server_id is not None:
+        _, owner_slug = find_existing_profile_dir(server_id, client_name)
+        if owner_slug:
+            return owner_slug
     return _default_owner_slug(client_name)
 
 def remove_user_expiration(username: str, server_id: str = None):

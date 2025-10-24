@@ -143,11 +143,6 @@ def generate_client_name(base: str, slug: str, existing: set[str]) -> str:
 def get_owner_slug(client_name, server_id):
     return db.resolve_owner_slug(client_name, server_id=server_id)
 
-def get_profile_dir(server_id, client_name, ensure=True):
-    owner_slug = get_owner_slug(client_name, server_id)
-    path = db.profile_dir(server_id, client_name, owner_slug=owner_slug, ensure=ensure)
-    return path, owner_slug
-
 def profile_file(server_id, client_name, filename, ensure=True):
     owner_slug = get_owner_slug(client_name, server_id)
     return db.profile_file_path(server_id, client_name, filename, owner_slug=owner_slug, ensure=ensure)
@@ -1198,7 +1193,7 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
     _, username = callback_query.data.split('connections_', 1)
     username = username.strip()
     original_username = username
-    file_path = profile_file(server_id, username, 'connections.json')
+    file_path = profile_file(server_id, username, 'connections.json', ensure=False)
     try:
         active_clients = db.get_active_list(server_id=server_id)
         active_info = next((client for client in active_clients if isinstance(client, dict) and client.get('name') == username), None)
@@ -1222,12 +1217,14 @@ async def client_connections_callback(callback_query: types.CallbackQuery):
 
                             if endpoint not in data:
                                 data[endpoint] = current_time
-                            
+
+                            os.makedirs(os.path.dirname(file_path), exist_ok=True)
                             async with aiofiles.open(file_path, 'w') as f:
                                 await f.write(json.dumps(data))
                 except ValueError:
                     logger.error(f"Некорректный формат времени последнего подключения: {last_handshake_str}")
 
+        await cleanup_connection_data(username, server_id)
         if os.path.exists(file_path):
             async with aiofiles.open(file_path, 'r') as f:
                 data = json.loads(await f.read())
@@ -1408,19 +1405,7 @@ async def client_delete_callback(callback_query: types.CallbackQuery):
             scheduler.remove_job(job_id=username)
         except:
             pass
-        profile_path, _ = get_profile_dir(effective_server_id, username, ensure=False)
-        try:
-            if profile_path and os.path.exists(profile_path):
-                shutil.rmtree(profile_path)
-        except Exception as e:
-            logger.error(f"Ошибка при удалении директории для пользователя {username}: {e}")
-
-        connections_file = profile_file(effective_server_id, username, 'connections.json', ensure=False)
-        try:
-            if connections_file and os.path.exists(connections_file):
-                os.remove(connections_file)
-        except Exception as e:
-            logger.error(f"Ошибка при удалении файла подключений для пользователя {username}: {e}")
+        db.cleanup_local_profile(username, effective_server_id)
         confirmation_text = f"Пользователь *{username}* успешно удален."
     else:
         confirmation_text = f"Не удалось удалить пользователя *{username}*."
@@ -2050,6 +2035,33 @@ async def update_traffic(username, incoming_bytes, outgoing_bytes, server_id):
         await f.write(json.dumps(traffic_data))
     return traffic_data
 
+async def check_profiles_consistency():
+    servers = db.load_servers()
+    expirations = db.load_expirations()
+    for server_id in servers.keys():
+        try:
+            remote_clients = {client[0] for client in db.get_client_list(server_id=server_id)}
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка клиентов сервера {server_id}: {e}")
+            continue
+        local_clients = db.list_local_profiles(server_id)
+        tracked_clients = {
+            user for user, server_info in expirations.items()
+            if server_id in server_info
+        }
+        stale_clients = (local_clients | tracked_clients) - remote_clients
+        for client_name in stale_clients:
+            logger.warning(f"Профиль {client_name} отсутствует на сервере {server_id}. Удаляем локальные данные.")
+            db.cleanup_local_profile(client_name, server_id, remove_expiration=True)
+            if client_name in expirations and server_id in expirations[client_name]:
+                del expirations[client_name][server_id]
+                if not expirations[client_name]:
+                    del expirations[client_name]
+            try:
+                scheduler.remove_job(job_id=client_name)
+            except:
+                pass
+
 async def update_all_clients_traffic():
     if not current_server:
         logger.info("Сервер не выбран, пропуск обновления трафика")
@@ -2103,19 +2115,7 @@ async def deactivate_user(client_name: str):
             scheduler.remove_job(job_id=client_name)
         except:
             pass
-        profile_path, _ = get_profile_dir(current_server, client_name, ensure=False)
-        try:
-            if profile_path and os.path.exists(profile_path):
-                shutil.rmtree(profile_path)
-        except Exception as e:
-            logger.error(f"Ошибка при удалении директории для пользователя {client_name}: {e}")
-
-        connections_file = profile_file(current_server, client_name, 'connections.json', ensure=False)
-        try:
-            if connections_file and os.path.exists(connections_file):
-                os.remove(connections_file)
-        except Exception as e:
-            logger.error(f"Ошибка при удалении файла подключений для пользователя {client_name}: {e}")
+        db.cleanup_local_profile(client_name, current_server)
         confirmation_text = f"Конфигурация пользователя *{client_name}* была деактивирована из-за превышения лимита трафика."
         sent_message = await bot.send_message(admin, confirmation_text, parse_mode="Markdown", disable_notification=True)
         asyncio.create_task(delete_message_after_delay(admin, sent_message.message_id, delay=15))
@@ -2203,8 +2203,9 @@ async def on_startup(dp):
         await bot.close()
         sys.exit(1)
     if not scheduler.running:
-        scheduler.add_job(update_all_clients_traffic, IntervalTrigger(minutes=1))
-        scheduler.add_job(periodic_ensure_peer_names, IntervalTrigger(minutes=1))
+        scheduler.add_job(update_all_clients_traffic, IntervalTrigger(minutes=1), id='update_all_clients_traffic', replace_existing=True)
+        scheduler.add_job(periodic_ensure_peer_names, IntervalTrigger(minutes=1), id='periodic_ensure_peer_names', replace_existing=True)
+        scheduler.add_job(check_profiles_consistency, IntervalTrigger(minutes=5), id='check_profiles_consistency', replace_existing=True)
         scheduler.start()
         logger.info("Планировщик запущен для обновления трафика каждые 5 минут.")
     users = db.get_users_with_expiration(server_id=current_server)
