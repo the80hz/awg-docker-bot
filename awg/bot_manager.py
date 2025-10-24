@@ -219,7 +219,7 @@ def update_server_settings(server_id=None):
 class AdminMessageDeletionMiddleware(BaseMiddleware):
     async def on_process_message(self, message: types.Message, data: dict):
         if is_admin(message):
-            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=2))
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
 
 dp = Dispatcher(bot)
 scheduler = AsyncIOScheduler(timezone=pytz.UTC)
