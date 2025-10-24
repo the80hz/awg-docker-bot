@@ -10,4 +10,4 @@ files/
 users/
 __pycache__/
 *.pyc
-files/
+data/
