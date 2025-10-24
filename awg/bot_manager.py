@@ -48,13 +48,14 @@ def slugify_description(value: str, max_length: int = MAX_DESCRIPTION_LENGTH) ->
         return ''
     result: list[str] = []
     for char in text:
-        if char in TRANSLIT_MAP:
-            mapped = TRANSLIT_MAP[char]
+        lower = char.lower()
+        if lower in TRANSLIT_MAP:
+            mapped = TRANSLIT_MAP[lower]
             if mapped:
                 result.append(mapped)
             continue
         if char.isalnum():
-            result.append(char)
+            result.append(lower)
             continue
         if char in {' ', '-', '_', '.', ','}:
             if result and result[-1] != '-':
@@ -65,18 +66,79 @@ def slugify_description(value: str, max_length: int = MAX_DESCRIPTION_LENGTH) ->
     slug = re.sub(r'-{2,}', '-', slug).strip('-')
     return slug[:max_length]
 
+def sanitize_owner_identifier(value: str, fallback_id: int) -> str:
+    text = unicodedata.normalize('NFKD', value or '').lower()
+    result: list[str] = []
+    for char in text:
+        lower = char.lower()
+        if lower in TRANSLIT_MAP:
+            mapped = TRANSLIT_MAP[lower]
+            if mapped:
+                result.append(mapped)
+            continue
+        if char.isalnum():
+            result.append(lower)
+            continue
+        if char in {' ', '-', '_', '.', ','}:
+            if result and result[-1] != '-':
+                result.append('-')
+            elif not result:
+                result.append('-')
+    sanitized = ''.join(result).strip('-')
+    if not sanitized:
+        sanitized = f"user{fallback_id}"
+    return sanitized[:MAX_CLIENT_NAME_LENGTH]
+
 def build_client_name(base: str, slug: str) -> str:
-    base = base.strip()
+    base = (base or '').strip('-')
+    slug = (slug or '').strip('-')
     if not slug:
         return base[:MAX_CLIENT_NAME_LENGTH]
-    candidate = f"{base}-{slug}"
-    if len(candidate) <= MAX_CLIENT_NAME_LENGTH:
+
+    separator = '-' if base else ''
+    max_len = MAX_CLIENT_NAME_LENGTH
+    trimmed_slug = slug[:max_len]
+    available_for_base = max_len - len(separator) - len(trimmed_slug)
+    if available_for_base < 0:
+        trimmed_slug = trimmed_slug[:max_len]
+        available_for_base = max_len - len(separator) - len(trimmed_slug)
+
+    trimmed_base = base[:max(0, available_for_base)]
+    trimmed_base = trimmed_base.rstrip('-')
+    if trimmed_base:
+        separator = '-'
+    else:
+        separator = ''
+
+    candidate = f"{trimmed_base}{separator}{trimmed_slug}"
+    if len(candidate) <= max_len:
         return candidate
-    allowed_slug = max(MAX_CLIENT_NAME_LENGTH - len(base) - 1, 0)
-    if allowed_slug <= 0:
-        return base[:MAX_CLIENT_NAME_LENGTH]
-    trimmed_slug = slug[:allowed_slug]
-    return f"{base}-{trimmed_slug}".rstrip('-')
+    return candidate[:max_len].rstrip('-')
+
+def ensure_unique_slugged_name(base: str, slug: str, existing: set[str]) -> str:
+    attempt = slug
+    counter = 1
+    while counter < 10000:
+        candidate = build_client_name(base, attempt)
+        if candidate and candidate not in existing:
+            return candidate
+        counter += 1
+        attempt = f"{slug}-{counter}"
+    raise RuntimeError("Не удалось подобрать уникальное имя клиента.")
+
+def next_sequential_name(base: str, existing: set[str]) -> str:
+    index = 1
+    while index < 10000:
+        candidate = build_client_name(base, str(index))
+        if candidate and candidate not in existing:
+            return candidate
+        index += 1
+    raise RuntimeError("Не удалось подобрать уникальный порядковый номер для клиента.")
+
+def generate_client_name(base: str, slug: str, existing: set[str]) -> str:
+    if slug:
+        return ensure_unique_slugged_name(base, slug, existing)
+    return next_sequential_name(base, existing)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -368,12 +430,16 @@ async def choose_server_callback(callback_query: types.CallbackQuery):
 @dp.message_handler()
 async def handle_messages(message: types.Message):
     # Проверяем, есть ли доступ у пользователя/чата
-    if not is_admin(message):
-        await message.answer("У вас нет доступа к этому боту.")
-        return
-    
     user_id = message.from_user.id
-    user_state = user_main_messages.get(user_id, {}).get('state')
+    current_state = user_main_messages.get(user_id, {}).get('state')
+
+    if not is_admin(message):
+        allowed_states = {'waiting_for_client_description'}
+        if current_state not in allowed_states:
+            await message.answer("У вас нет доступа к этому боту.")
+            return
+    
+    user_state = current_state
     
     if user_state == 'waiting_for_server_id':
         server_id = message.text.strip()
@@ -605,15 +671,14 @@ async def handle_messages(message: types.Message):
                 asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
                 return
 
-        client_name = build_client_name(client_base, slug)
         entry['state'] = None
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
         await finalize_client_creation(
             user_id=user_id,
             server_id=server_id,
-            client_name=client_name,
             owner_id=owner_id,
-            chat_id=message.chat.id
+            chat_id=message.chat.id,
+            slug=slug
         )
         
     else:
@@ -629,7 +694,8 @@ async def add_user_start(callback_query: types.CallbackQuery):
         await callback_query.answer("Сервер не выбран, создание конфигурации временно недоступно.", show_alert=True)
         return
 
-    client_base = f"{callback_query.from_user.username or user_id}_{int(datetime.now().timestamp())}"
+    raw_owner = callback_query.from_user.username or ''
+    client_base = sanitize_owner_identifier(raw_owner, user_id)
     entry = user_main_messages.setdefault(user_id, {})
     entry['pending_client_base'] = client_base
     entry['pending_owner_id'] = callback_query.from_user.id
@@ -672,11 +738,31 @@ async def add_user_start(callback_query: types.CallbackQuery):
 
     await callback_query.answer()
 
-async def finalize_client_creation(user_id: int, server_id: str, client_name: str, owner_id: int, chat_id: int):
+async def finalize_client_creation(user_id: int, server_id: str, owner_id: int, chat_id: int, slug: str):
     entry = user_main_messages.setdefault(user_id, {})
+    base = entry.get('pending_client_base') or sanitize_owner_identifier('', owner_id)
     entry.pop('state', None)
     entry.pop('pending_client_base', None)
     entry.pop('pending_owner_id', None)
+
+    try:
+        existing_clients = db.get_client_list(server_id=server_id)
+    except Exception as e:
+        logger.error(f"Не удалось получить список существующих клиентов: {e}")
+        existing_clients = []
+
+    existing_names = {
+        client[0] for client in existing_clients
+        if isinstance(client, (list, tuple)) and client
+    }
+    users_path = os.path.join(os.getcwd(), 'users')
+    if os.path.isdir(users_path):
+        existing_names.update(
+            name for name in os.listdir(users_path)
+            if isinstance(name, str)
+        )
+
+    client_name = generate_client_name(base, slug, existing_names)
 
     db.set_user_expiration(client_name, None, "Неограниченно", owner_id=owner_id, server_id=server_id)
     confirmation_text = f"Пользователь *{client_name}* добавлен."
@@ -743,14 +829,13 @@ async def skip_client_description(callback_query: types.CallbackQuery):
         await callback_query.answer("Нет активного создания клиента.", show_alert=True)
         return
 
-    client_name = build_client_name(client_base, '')
     entry['state'] = None
     await finalize_client_creation(
         user_id=user_id,
         server_id=server_id,
-        client_name=client_name,
         owner_id=owner_id,
-        chat_id=callback_query.message.chat.id
+        chat_id=callback_query.message.chat.id,
+        slug=''
     )
     await callback_query.answer()
 
