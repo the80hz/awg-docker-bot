@@ -657,6 +657,57 @@ async def handle_messages(message: types.Message):
                 )
         
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+
+    elif user_state == 'waiting_for_password_update':
+        new_password = message.text.strip()
+        entry = user_main_messages.get(user_id, {})
+        server_id = entry.get('password_update_server_id')
+        main_chat_id = entry.get('chat_id')
+        main_message_id = entry.get('message_id')
+
+        if not server_id:
+            if main_chat_id and main_message_id:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text="Не удалось определить сервер для обновления пароля.",
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers")
+                    )
+                )
+            entry.pop('state', None)
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
+
+        if not new_password:
+            if main_chat_id and main_message_id:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text="Пароль не может быть пустым. Введите новый пароль:",
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("Отмена", callback_data="manage_servers")
+                    )
+                )
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
+
+        success = db.update_server_password(server_id, new_password)
+        entry.pop('state', None)
+        entry.pop('password_update_server_id', None)
+
+        result_text = "Пароль успешно обновлен." if success else "Не удалось обновить пароль."
+        if main_chat_id and main_message_id:
+            await bot.edit_message_text(
+                chat_id=main_chat_id,
+                message_id=main_message_id,
+                text=result_text,
+                reply_markup=InlineKeyboardMarkup(row_width=2).add(
+                    InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers"),
+                    InlineKeyboardButton("Домой", callback_data="home")
+                )
+            )
+        asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
         
     elif user_state == 'waiting_for_client_description':
         description = message.text.strip()
@@ -1478,6 +1529,7 @@ async def manage_servers_callback(callback_query: types.CallbackQuery):
     
     keyboard.add(InlineKeyboardButton("Добавить сервер", callback_data="add_server"))
     if servers:
+        keyboard.add(InlineKeyboardButton("Обновить пароль", callback_data="update_server_password"))
         keyboard.add(InlineKeyboardButton("Удалить сервер", callback_data="delete_server"))
     keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
     
@@ -1502,6 +1554,52 @@ async def select_server_callback(callback_query: types.CallbackQuery):
         await manage_servers_callback(callback_query)
     else:
         await callback_query.answer("Ошибка при выборе сервера", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data == 'update_server_password')
+async def update_server_password_menu(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query):
+        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
+        return
+
+    servers = db.get_server_list()
+    if not servers:
+        await callback_query.answer("В конфигурации нет серверов", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for server in servers:
+        keyboard.add(InlineKeyboardButton(f"🔐 {server}", callback_data=f"update_password_server_{server}"))
+    keyboard.add(InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers"))
+
+    await bot.edit_message_text(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        text="Выберите сервер, чтобы обновить пароль:",
+        reply_markup=keyboard
+    )
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('update_password_server_'))
+async def update_password_server_callback(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query):
+        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
+        return
+
+    server_id = callback_query.data.split('update_password_server_')[1]
+    entry = user_main_messages.setdefault(admin, {})
+    entry['state'] = 'waiting_for_password_update'
+    entry['password_update_server_id'] = server_id
+    entry['auth_message_id'] = callback_query.message.message_id
+
+    await bot.edit_message_text(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        text=f"Введите новый пароль для сервера {server_id}:",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("Отмена", callback_data="manage_servers")
+        )
+    )
+    await callback_query.answer()
 
 @dp.callback_query_handler(lambda c: c.data in ['auth_password', 'auth_key'])
 async def auth_type_callback(callback_query: types.CallbackQuery):

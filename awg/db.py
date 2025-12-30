@@ -192,6 +192,32 @@ def add_server(server_id, host, port, username, auth_type, password=None, key_pa
     
     return server_config
 
+def update_server_password(server_id, new_password):
+    if not server_id or not new_password:
+        return False
+    servers = load_servers()
+    if server_id not in servers:
+        logger.error(f"Сервер {server_id} не найден при обновлении пароля")
+        return False
+
+    hashed = hash_password(new_password)
+    servers[server_id]['password'] = hashed
+    servers[server_id]['_original_password'] = new_password
+    save_servers(servers)
+
+    if server_id in SSHManager._instances:
+        ssh = SSHManager._instances[server_id]
+        ssh.password = new_password
+        ssh._original_password = new_password
+        if getattr(ssh, 'client', None):
+            try:
+                ssh.client.close()
+            except Exception:
+                pass
+            ssh.client = None
+    logger.info(f"Пароль сервера {server_id} обновлен")
+    return True
+
 def remove_server(server_id):
     try:
         servers = load_servers()
