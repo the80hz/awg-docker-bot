@@ -204,6 +204,7 @@ current_server = None
 WG_CONFIG_FILE = None
 DOCKER_CONTAINER = None
 ENDPOINT = None
+environment_ready = False
 
 def update_server_settings(server_id=None):
     global current_server, WG_CONFIG_FILE, DOCKER_CONTAINER, ENDPOINT
@@ -2392,42 +2393,43 @@ async def on_startup(dp):
             await bot.send_message(admin, "Не найдено ни одного сервера. Добавьте сервер через меню 'Управление серверами'")
             return
     
-    environment_ok = await check_environment()
-    if not environment_ok:
-        logger.error("Необходимо инициализировать AmneziaVPN перед запуском бота.")
-        await bot.send_message(admin, "Необходимо инициализировать AmneziaVPN перед запуском бота.")
-        await bot.close()
-        sys.exit(1)
-    if not scheduler.running:
-        scheduler.add_job(update_all_clients_traffic, IntervalTrigger(minutes=1), id='update_all_clients_traffic', replace_existing=True)
-        scheduler.add_job(periodic_ensure_peer_names, IntervalTrigger(minutes=1), id='periodic_ensure_peer_names', replace_existing=True)
-        scheduler.add_job(check_profiles_consistency, IntervalTrigger(minutes=5), id='check_profiles_consistency', replace_existing=True)
-        scheduler.start()
-        logger.info("Планировщик запущен для обновления трафика каждые 5 минут.")
-    users = db.get_users_with_expiration(server_id=current_server)
-    for user in users:
-        client_name, expiration_time, traffic_limit = user
-        if expiration_time:
-            try:
-                expiration_datetime = datetime.fromisoformat(expiration_time)
-            except ValueError:
-                logger.error(f"Некорректный формат даты для пользователя {client_name}: {expiration_time}")
-                continue
-            if expiration_datetime.tzinfo is None:
-                expiration_datetime = expiration_datetime.replace(tzinfo=pytz.UTC)
-            if expiration_datetime > datetime.now(pytz.UTC):
-                scheduler.add_job(
-                    deactivate_user,
-                    trigger=DateTrigger(run_date=expiration_datetime),
-                    args=[client_name],
-                    id=client_name
-                )
-                logger.info(f"Запланирована деактивация пользователя {client_name} на {expiration_datetime}")
-            else:
-                await deactivate_user(client_name)
+    global environment_ready
+    environment_ready = await check_environment()
+    if not environment_ready:
+        logger.warning("Необходимо инициализировать AmneziaVPN перед запуском бота.")
+        await bot.send_message(admin, "Необходимо инициализировать AmneziaVPN перед запуском бота. Бот продолжит работу, но функции управления сервером могут быть недоступны, пока вы не завершите инициализацию.")
+    else:
+        if not scheduler.running:
+            scheduler.add_job(update_all_clients_traffic, IntervalTrigger(minutes=1), id='update_all_clients_traffic', replace_existing=True)
+            scheduler.add_job(periodic_ensure_peer_names, IntervalTrigger(minutes=1), id='periodic_ensure_peer_names', replace_existing=True)
+            scheduler.add_job(check_profiles_consistency, IntervalTrigger(minutes=5), id='check_profiles_consistency', replace_existing=True)
+            scheduler.start()
+            logger.info("Планировщик запущен для обновления трафика каждые 5 минут.")
+        users = db.get_users_with_expiration(server_id=current_server)
+        for user in users:
+            client_name, expiration_time, traffic_limit = user
+            if expiration_time:
+                try:
+                    expiration_datetime = datetime.fromisoformat(expiration_time)
+                except ValueError:
+                    logger.error(f"Некорректный формат даты для пользователя {client_name}: {expiration_time}")
+                    continue
+                if expiration_datetime.tzinfo is None:
+                    expiration_datetime = expiration_datetime.replace(tzinfo=pytz.UTC)
+                if expiration_datetime > datetime.now(pytz.UTC):
+                    scheduler.add_job(
+                        deactivate_user,
+                        trigger=DateTrigger(run_date=expiration_datetime),
+                        args=[client_name],
+                        id=client_name
+                    )
+                    logger.info(f"Запланирована деактивация пользователя {client_name} на {expiration_datetime}")
+                else:
+                    await deactivate_user(client_name)
 
 async def on_shutdown(dp):
-    scheduler.shutdown()
-    logger.info("Планировщик остановлен.")
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("Планировщик остановлен.")
 
 executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
