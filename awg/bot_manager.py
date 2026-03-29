@@ -205,6 +205,7 @@ WG_CONFIG_FILE = None
 DOCKER_CONTAINER = None
 ENDPOINT = None
 environment_ready = False
+environment_warning_sent = False
 
 def update_server_settings(server_id=None):
     global current_server, WG_CONFIG_FILE, DOCKER_CONTAINER, ENDPOINT
@@ -2280,6 +2281,17 @@ async def update_all_clients_traffic():
                 await deactivate_user(username)
     logger.info("Завершено обновление трафика для всех клиентов.")
 
+def ensure_scheduler_jobs():
+    jobs = [
+        ("update_all_clients_traffic", update_all_clients_traffic, IntervalTrigger(minutes=1)),
+        ("periodic_ensure_peer_names", periodic_ensure_peer_names, IntervalTrigger(minutes=1)),
+        ("check_profiles_consistency", check_profiles_consistency, IntervalTrigger(minutes=5)),
+    ]
+    for job_id, job_func, trigger in jobs:
+        if scheduler.get_job(job_id):
+            continue
+        scheduler.add_job(job_func, trigger, id=job_id, replace_existing=True)
+
 async def generate_vpn_key(conf_path: str) -> str:
     try:
         process = await asyncio.create_subprocess_exec(
@@ -2393,18 +2405,19 @@ async def on_startup(dp):
             await bot.send_message(admin, "Не найдено ни одного сервера. Добавьте сервер через меню 'Управление серверами'")
             return
     
-    global environment_ready
+    global environment_ready, environment_warning_sent
     environment_ready = await check_environment()
     if not environment_ready:
-        logger.warning("Необходимо инициализировать AmneziaVPN перед запуском бота.")
-        await bot.send_message(admin, "Необходимо инициализировать AmneziaVPN перед запуском бота. Бот продолжит работу, но функции управления сервером могут быть недоступны, пока вы не завершите инициализацию.")
+        if not environment_warning_sent:
+            logger.warning("Необходимо инициализировать AmneziaVPN перед запуском бота.")
+            await bot.send_message(
+                admin,
+                "Необходимо инициализировать AmneziaVPN перед запуском бота. Бот продолжит работу, но функции управления сервером могут быть недоступны, пока вы не завершите инициализацию или не обновите SSH ключ в меню 'Управление серверами'."
+            )
+            environment_warning_sent = True
     else:
-        if not scheduler.running:
-            scheduler.add_job(update_all_clients_traffic, IntervalTrigger(minutes=1), id='update_all_clients_traffic', replace_existing=True)
-            scheduler.add_job(periodic_ensure_peer_names, IntervalTrigger(minutes=1), id='periodic_ensure_peer_names', replace_existing=True)
-            scheduler.add_job(check_profiles_consistency, IntervalTrigger(minutes=5), id='check_profiles_consistency', replace_existing=True)
-            scheduler.start()
-            logger.info("Планировщик запущен для обновления трафика каждые 5 минут.")
+        environment_warning_sent = False
+        ensure_scheduler_jobs()
         users = db.get_users_with_expiration(server_id=current_server)
         for user in users:
             client_name, expiration_time, traffic_limit = user
