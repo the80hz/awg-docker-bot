@@ -16,6 +16,7 @@ import ipaddress
 import humanize
 import shutil
 import unicodedata
+import base64
 from aiogram import Bot, types
 from aiogram.dispatcher import Dispatcher
 from aiogram.utils import exceptions as aiogram_exceptions
@@ -266,6 +267,118 @@ def get_user_main_menu(server_id=None):
     else:
         keyboard = get_user_server_keyboard()
     return keyboard
+
+
+def build_active_lookup(server_id: str) -> dict[str, dict[str, str]]:
+    """Возвращает кеш последних активностей клиентов для статусов списка."""
+    active_clients = db.get_active_list(server_id=server_id)
+    lookup: dict[str, dict[str, str]] = {}
+    for item in active_clients:
+        if isinstance(item, dict):
+            name = item.get('name')
+            if name:
+                lookup[name] = {
+                    'last_handshake': item.get('last_handshake', 'never'),
+                    'transfer': item.get('transfer', '0/0')
+                }
+        elif isinstance(item, (list, tuple)) and item:
+            name = item[0]
+            if name:
+                last_handshake_value = item[1] if len(item) > 1 else 'never'
+                transfer_value = item[2] if len(item) > 2 else '0/0'
+                lookup[name] = {
+                    'last_handshake': last_handshake_value,
+                    'transfer': transfer_value
+                }
+    return lookup
+
+
+def build_client_status_label(username: str, active_lookup: dict[str, dict[str, str]]) -> str:
+    status_icon = "🚫"
+    status_suffix = ""
+    active_info = active_lookup.get(username)
+    if active_info:
+        last_handshake_str = active_info.get('last_handshake', 'never')
+        if isinstance(last_handshake_str, str) and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
+            try:
+                last_handshake_dt = parse_relative_time(last_handshake_str)
+                if last_handshake_dt:
+                    delta = datetime.now(pytz.UTC) - last_handshake_dt
+                    if delta <= timedelta(minutes=3):
+                        status_icon = "🟢"
+                    else:
+                        status_icon = "🔴"
+                    minutes_ago = max(1, int(delta.total_seconds() // 60))
+                    status_suffix = f" ({minutes_ago}m)"
+                else:
+                    status_icon = "❓"
+            except Exception:
+                status_icon = "❓"
+        else:
+            status_icon = "❓"
+    return f"{status_icon}{status_suffix} {username}"
+
+
+def resolve_owner_id(username: str, server_id: str, expirations: dict) -> object:
+    if not expirations:
+        return None
+    server_entries = expirations.get(username)
+    if not isinstance(server_entries, dict):
+        return None
+    if server_id in server_entries:
+        entry = server_entries[server_id]
+    else:
+        entry = server_entries.get(str(server_id))
+    if isinstance(entry, dict):
+        return entry.get('owner_id')
+    return None
+
+
+def format_owner_label(owner_id: object) -> str:
+    if owner_id is None:
+        return "📁 Unknown"
+    if isinstance(owner_id, int):
+        return f"ID {owner_id}"
+    owner_str = str(owner_id)
+    if owner_str.startswith('@'):
+        return owner_str
+    if owner_str.isdigit():
+        return f"ID {owner_str}"
+    return owner_str
+
+
+def owner_sort_key(owner_id: object) -> tuple[int, str]:
+    if isinstance(owner_id, int):
+        return (0, str(owner_id))
+    return (1, str(owner_id or '').lower())
+
+
+def encode_owner_token(owner_id: object) -> str:
+    if owner_id is None:
+        return "unknown"
+    payload = {'t': 'i' if isinstance(owner_id, int) else 's', 'v': owner_id}
+    raw = json.dumps(payload, ensure_ascii=True)
+    encoded = base64.urlsafe_b64encode(raw.encode()).decode().rstrip('=')
+    return encoded
+
+
+def decode_owner_token(token: str) -> object:
+    if token == "unknown":
+        return None
+    padding = '=' * (-len(token) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(token + padding).decode()
+        payload = json.loads(raw)
+        owner_type = payload.get('t')
+        owner_value = payload.get('v')
+        if owner_type == 'i':
+            try:
+                return int(owner_value)
+            except (TypeError, ValueError):
+                return None
+        return owner_value
+    except Exception:
+        return None
 
 
 current_server = None
@@ -1182,7 +1295,7 @@ async def client_selected_callback(callback_query: types.CallbackQuery):
 
     await callback_query.answer()
 
-@dp.callback_query_handler(lambda c: c.data.startswith('list_users'))
+@dp.callback_query_handler(lambda c: c.data == 'list_users' or c.data.startswith('list_users:') or c.data.startswith('list_users_next'))
 async def list_users_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     
@@ -1191,13 +1304,11 @@ async def list_users_callback(callback_query: types.CallbackQuery):
         await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
         return
     
-    # Проверяем, админ ли пользователь
-    if is_admin(callback_query):
+    admin_request = is_admin(callback_query)
+    if admin_request:
         clients = db.get_client_list(server_id=server_id)
-        text_header = f"Все пользователи\nТекущий сервер: *{server_id}*"
     else:
         clients = db.get_clients_by_owner(owner_id=user_id, server_id=server_id)
-        text_header = f"Мои конфигурации\nТекущий сервер: *{server_id}*"
 
     # Гарантируем, что clients — список
     if not clients:
@@ -1206,29 +1317,82 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     if not isinstance(clients, (list, tuple)):
         clients = [clients]
 
+    if admin_request:
+        expirations = db.load_expirations()
+        owner_groups: dict[object, list] = {}
+        for client in clients:
+            username = client[0]
+            owner_id = resolve_owner_id(username, server_id, expirations)
+            owner_groups.setdefault(owner_id, []).append(client)
+
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        unknown_clients = owner_groups.pop(None, [])
+        if unknown_clients:
+            unknown_text = f"{format_owner_label(None)} ({len(unknown_clients)})"
+            keyboard.add(InlineKeyboardButton(
+                text=unknown_text,
+                callback_data=f"list_users_owner:{encode_owner_token(None)}:0"
+            ))
+
+        for owner_id in sorted(owner_groups.keys(), key=owner_sort_key):
+            owner_text = f"{format_owner_label(owner_id)} ({len(owner_groups[owner_id])})"
+            keyboard.add(InlineKeyboardButton(
+                text=owner_text,
+                callback_data=f"list_users_owner:{encode_owner_token(owner_id)}:0"
+            ))
+
+        keyboard.add(InlineKeyboardButton(text="Домой", callback_data="home"))
+        text_header = (
+            f"Все пользователи\n"
+            f"Текущий сервер: *{server_id}*\n"
+            "Выберите владельца для просмотра конфигураций."
+        )
+
+        main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+        main_message_id = user_main_messages.get(user_id, {}).get('message_id')
+
+        if main_chat_id and main_message_id:
+            current_message = callback_query.message
+            def markup_equal(a, b):
+                return getattr(a, 'to_python', lambda: a)() == getattr(b, 'to_python', lambda: b)()
+            if current_message.text != text_header or not markup_equal(current_message.reply_markup, keyboard):
+                try:
+                    await bot.edit_message_text(
+                        chat_id=main_chat_id,
+                        message_id=main_message_id,
+                        text=text_header,
+                        reply_markup=keyboard,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при редактировании сообщения: {e}")
+                    await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
+                    return
+        else:
+            sent_message = await callback_query.message.reply(
+                text_header,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+            user_main_messages[user_id] = {
+                'chat_id': sent_message.chat.id,
+                'message_id': sent_message.message_id
+            }
+            try:
+                await bot.pin_chat_message(
+                    chat_id=sent_message.chat.id,
+                    message_id=sent_message.message_id,
+                    disable_notification=True
+                )
+            except:
+                pass
+
+        await callback_query.answer()
+        return
+
     keyboard = InlineKeyboardMarkup(row_width=1)
-
-    active_clients = db.get_active_list(server_id=server_id)
-    active_lookup = {}
-    for item in active_clients:
-        if isinstance(item, dict):
-            name = item.get('name')
-            if name:
-                active_lookup[name] = {
-                    'last_handshake': item.get('last_handshake', 'never'),
-                    'transfer': item.get('transfer', '0/0')
-                }
-        elif isinstance(item, (list, tuple)) and item:
-            name = item[0]
-            if name:
-                last_handshake_value = item[1] if len(item) > 1 else 'never'
-                transfer_value = item[2] if len(item) > 2 else '0/0'
-                active_lookup[name] = {
-                    'last_handshake': last_handshake_value,
-                    'transfer': transfer_value
-                }
-
-    expirations = db.load_expirations() if is_admin(callback_query) else {}
+    text_header = f"Мои конфигурации\nТекущий сервер: *{server_id}*"
+    active_lookup = build_active_lookup(server_id)
 
     MAX_BUTTONS = 50
     # Получаем номер страницы из callback_data, если есть
@@ -1240,45 +1404,8 @@ async def list_users_callback(callback_query: types.CallbackQuery):
     total_clients = len(clients)
     shown_clients = clients[start_idx:end_idx]
     for client in shown_clients:
-        # client — это кортеж или список: (username, name, ...)
         username = client[0]
-        status_icon = "🚫"
-        status_suffix = ""
-
-        active_info = active_lookup.get(username)
-        if active_info:
-            last_handshake_str = active_info.get('last_handshake', 'never')
-            if isinstance(last_handshake_str, str) and last_handshake_str.lower() not in ['never', 'нет данных', '-']:
-                try:
-                    last_handshake_dt = parse_relative_time(last_handshake_str)
-                    if last_handshake_dt:
-                        delta = datetime.now(pytz.UTC) - last_handshake_dt
-                        if delta <= timedelta(minutes=3):
-                            status_icon = "🟢"
-                        else:
-                            status_icon = "🔴"
-                        minutes_ago = max(1, int(delta.total_seconds() // 60))
-                        status_suffix = f" ({minutes_ago}m)"
-                    else:
-                        status_icon = "❓"
-                except Exception:
-                    status_icon = "❓"
-            else:
-                status_icon = "❓"
-
-        button_text = f"{status_icon}{status_suffix} {username}"
-
-        if expirations and isinstance(expirations, dict) and is_admin(callback_query):
-            owner_label = "Unknown"
-            user_servers = expirations.get(username)
-            if isinstance(user_servers, dict):
-                server_info = user_servers.get(server_id) or user_servers.get(str(server_id))
-                if isinstance(server_info, dict):
-                    owner_id = server_info.get('owner_id')
-                    if owner_id:
-                        owner_label = f"@{owner_id}" if isinstance(owner_id, str) else f"ID:{owner_id}"
-            button_text = f"{button_text} ({owner_label})"
-
+        button_text = build_client_status_label(username, active_lookup)
         keyboard.add(InlineKeyboardButton(text=button_text, callback_data=f"client_{username}"))
 
     if end_idx < total_clients:
@@ -1305,6 +1432,114 @@ async def list_users_callback(callback_query: types.CallbackQuery):
             except Exception as e:
                 logger.error(f"Ошибка при редактировании сообщения: {e}")
                 await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
+    else:
+        sent_message = await callback_query.message.reply(
+            text_header,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        user_main_messages[user_id] = {
+            'chat_id': sent_message.chat.id,
+            'message_id': sent_message.message_id
+        }
+        try:
+            await bot.pin_chat_message(
+                chat_id=sent_message.chat.id,
+                message_id=sent_message.message_id,
+                disable_notification=True
+            )
+        except:
+            pass
+
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('list_users_owner'))
+async def list_users_owner_callback(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query):
+        await callback_query.answer("У вас нет прав для этого действия.", show_alert=True)
+        return
+
+    user_id = callback_query.from_user.id
+    server_id = current_server
+    if not server_id:
+        await callback_query.answer("Сначала выберите сервер в разделе 'Управление серверами'", show_alert=True)
+        return
+
+    data_parts = callback_query.data.split(':', 2)
+    owner_token = data_parts[1] if len(data_parts) > 1 else "unknown"
+    try:
+        page = int(data_parts[2]) if len(data_parts) > 2 else 0
+    except ValueError:
+        page = 0
+
+    owner_id = decode_owner_token(owner_token)
+
+    clients = db.get_client_list(server_id=server_id)
+    if not clients:
+        await callback_query.answer("Список конфигураций пуст.", show_alert=True)
+        return
+    if not isinstance(clients, (list, tuple)):
+        clients = [clients]
+
+    expirations = db.load_expirations()
+    filtered_clients = []
+    for client in clients:
+        username = client[0]
+        if resolve_owner_id(username, server_id, expirations) == owner_id:
+            filtered_clients.append(client)
+
+    if not filtered_clients:
+        await callback_query.answer("Для этого владельца нет конфигураций.", show_alert=True)
+        return
+
+    MAX_BUTTONS = 50
+    start_idx = page * MAX_BUTTONS
+    end_idx = start_idx + MAX_BUTTONS
+    shown_clients = filtered_clients[start_idx:end_idx]
+
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    active_lookup = build_active_lookup(server_id)
+    for client in shown_clients:
+        username = client[0]
+        button_text = build_client_status_label(username, active_lookup)
+        keyboard.add(InlineKeyboardButton(text=button_text, callback_data=f"client_{username}"))
+
+    if end_idx < len(filtered_clients):
+        keyboard.add(InlineKeyboardButton(
+            text="Следующая страница",
+            callback_data=f"list_users_owner:{owner_token}:{page+1}"
+        ))
+
+    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data="list_users"))
+    keyboard.add(InlineKeyboardButton(text="Домой", callback_data="home"))
+
+    owner_label = format_owner_label(owner_id)
+    text_header = (
+        f"Конфигурации владельца: {owner_label}\n"
+        f"Текущий сервер: *{server_id}*\n"
+        f"Всего профилей: {len(filtered_clients)}"
+    )
+
+    main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+    main_message_id = user_main_messages.get(user_id, {}).get('message_id')
+
+    if main_chat_id and main_message_id:
+        current_message = callback_query.message
+        def markup_equal(a, b):
+            return getattr(a, 'to_python', lambda: a)() == getattr(b, 'to_python', lambda: b)()
+        if current_message.text != text_header or not markup_equal(current_message.reply_markup, keyboard):
+            try:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text=text_header,
+                    reply_markup=keyboard,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при редактировании сообщения: {e}")
+                await callback_query.answer("Ошибка при обновлении сообщения.", show_alert=True)
+                return
     else:
         sent_message = await callback_query.message.reply(
             text_header,
