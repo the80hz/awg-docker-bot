@@ -218,6 +218,35 @@ def update_server_password(server_id, new_password):
     logger.info(f"Пароль сервера {server_id} обновлен")
     return True
 
+def update_server_key(server_id, key_path):
+    if not server_id or not key_path:
+        return False
+    servers = load_servers()
+    if server_id not in servers:
+        logger.error(f"Сервер {server_id} не найден при обновлении ключа")
+        return False
+
+    servers[server_id]['auth_type'] = 'key'
+    servers[server_id]['key_path'] = key_path
+    servers[server_id]['password'] = None
+    servers[server_id]['_original_password'] = None
+    save_servers(servers)
+
+    if server_id in SSHManager._instances:
+        ssh = SSHManager._instances[server_id]
+        ssh.auth_type = 'key'
+        ssh.key_path = key_path
+        ssh.password = None
+        ssh._original_password = None
+        if getattr(ssh, 'client', None):
+            try:
+                ssh.client.close()
+            except Exception:
+                pass
+            ssh.client = None
+    logger.info(f"Ключ авторизации сервера {server_id} обновлен")
+    return True
+
 def remove_server(server_id):
     try:
         servers = load_servers()

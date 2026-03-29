@@ -708,6 +708,58 @@ async def handle_messages(message: types.Message):
                 )
             )
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+
+    elif user_state == 'waiting_for_key_update':
+        key_path_input = message.text.strip()
+        entry = user_main_messages.get(user_id, {})
+        server_id = entry.get('key_update_server_id')
+        main_chat_id = entry.get('chat_id')
+        main_message_id = entry.get('message_id')
+
+        if not server_id:
+            if main_chat_id and main_message_id:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text="Не удалось определить сервер для обновления ключа.",
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers")
+                    )
+                )
+            entry.pop('state', None)
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
+
+        resolved_path = os.path.abspath(os.path.expanduser(key_path_input))
+        if not os.path.isfile(resolved_path):
+            if main_chat_id and main_message_id:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text="Файл не найден. Укажите корректный путь до приватного ключа:",
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("Отмена", callback_data="manage_servers")
+                    )
+                )
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
+
+        success = db.update_server_key(server_id, resolved_path)
+        entry.pop('state', None)
+        entry.pop('key_update_server_id', None)
+
+        result_text = "SSH ключ успешно обновлен." if success else "Не удалось обновить SSH ключ."
+        if main_chat_id and main_message_id:
+            await bot.edit_message_text(
+                chat_id=main_chat_id,
+                message_id=main_message_id,
+                text=result_text,
+                reply_markup=InlineKeyboardMarkup(row_width=2).add(
+                    InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers"),
+                    InlineKeyboardButton("Домой", callback_data="home")
+                )
+            )
+        asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
         
     elif user_state == 'waiting_for_client_description':
         description = message.text.strip()
@@ -1530,6 +1582,7 @@ async def manage_servers_callback(callback_query: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("Добавить сервер", callback_data="add_server"))
     if servers:
         keyboard.add(InlineKeyboardButton("Обновить пароль", callback_data="update_server_password"))
+        keyboard.add(InlineKeyboardButton("Обновить SSH ключ", callback_data="update_server_key"))
         keyboard.add(InlineKeyboardButton("Удалить сервер", callback_data="delete_server"))
     keyboard.add(InlineKeyboardButton("Домой", callback_data="home"))
     
@@ -1595,6 +1648,51 @@ async def update_password_server_callback(callback_query: types.CallbackQuery):
         chat_id=callback_query.message.chat.id,
         message_id=callback_query.message.message_id,
         text=f"Введите новый пароль для сервера {server_id}:",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("Отмена", callback_data="manage_servers")
+        )
+    )
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data == 'update_server_key')
+async def update_server_key_menu(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query):
+        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
+        return
+
+    servers = db.get_server_list()
+    if not servers:
+        await callback_query.answer("В конфигурации нет серверов", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    for server in servers:
+        keyboard.add(InlineKeyboardButton(f"🔑 {server}", callback_data=f"update_key_server_{server}"))
+    keyboard.add(InlineKeyboardButton("⬅️ Назад", callback_data="manage_servers"))
+
+    await bot.edit_message_text(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        text="Выберите сервер, чтобы обновить SSH ключ:",
+        reply_markup=keyboard
+    )
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('update_key_server_'))
+async def update_key_server_callback(callback_query: types.CallbackQuery):
+    if not is_admin(callback_query):
+        await callback_query.answer("У вас нет прав для выполнения этого действия.", show_alert=True)
+        return
+
+    server_id = callback_query.data.split('update_key_server_')[1]
+    entry = user_main_messages.setdefault(admin, {})
+    entry['state'] = 'waiting_for_key_update'
+    entry['key_update_server_id'] = server_id
+
+    await bot.edit_message_text(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        text=f"Введите путь до приватного SSH-ключа для сервера {server_id}:",
         reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("Отмена", callback_data="manage_servers")
         )
