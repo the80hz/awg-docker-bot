@@ -151,6 +151,7 @@ DATA_DIR = 'data'
 SERVERS_ROOT = os.path.join(DATA_DIR, 'servers')
 PROFILES_ROOT = os.path.join(DATA_DIR, 'profiles')
 ISP_CACHE_FILE = os.path.join(DATA_DIR, 'isp_cache.json')
+SSH_KEYS_DIR = os.path.join(DATA_DIR, 'ssh_keys')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -280,6 +281,34 @@ def get_interface_name():
         return ""
     # Ensure WG_CONFIG_FILE is a string before passing to os.path.basename
     return os.path.basename(str(WG_CONFIG_FILE)).split('.')[0]
+
+async def resolve_private_key_input(message: types.Message, server_id: str) -> tuple[str | None, str | None]:
+    os.makedirs(SSH_KEYS_DIR, exist_ok=True)
+
+    if message.document:
+        file_info = await bot.get_file(message.document.file_id)
+        original_name = message.document.file_name or "id_key"
+        safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', original_name)
+        stored_path = os.path.join(SSH_KEYS_DIR, f"{server_id}_{safe_name}")
+        await bot.download_file(file_info.file_path, stored_path)
+        os.chmod(stored_path, 0o600)
+        return stored_path, None
+
+    text = (message.text or "").strip()
+    if not text:
+        return None, "Укажите путь до ключа, вставьте содержимое приватного ключа или отправьте файл с ключом."
+
+    if text.startswith("-----BEGIN") and "PRIVATE KEY" in text:
+        stored_path = os.path.join(SSH_KEYS_DIR, f"{server_id}_inline_key.pem")
+        async with aiofiles.open(stored_path, 'w') as f:
+            await f.write(text if text.endswith('\n') else text + '\n')
+        os.chmod(stored_path, 0o600)
+        return stored_path, None
+
+    resolved_path = os.path.abspath(os.path.expanduser(text))
+    if not os.path.isfile(resolved_path):
+        return None, "Файл не найден. Укажите корректный путь, вставьте содержимое ключа или отправьте файл."
+    return resolved_path, None
 
 async def load_isp_cache():
     global isp_cache
@@ -609,8 +638,23 @@ async def handle_messages(message: types.Message):
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
             
     elif user_state == 'waiting_for_key_path':
-        key_path = message.text.strip()
         server_data = user_main_messages[user_id]
+        key_path, key_error = await resolve_private_key_input(message, server_data['server_id'])
+
+        if key_error:
+            main_chat_id = user_main_messages.get(user_id, {}).get('chat_id')
+            main_message_id = user_main_messages.get(user_id, {}).get('message_id')
+            if main_chat_id and main_message_id:
+                await bot.edit_message_text(
+                    chat_id=main_chat_id,
+                    message_id=main_message_id,
+                    text=key_error,
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("Отмена", callback_data="manage_servers")
+                    )
+                )
+            asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
+            return
         
         success = db.add_server(
             server_data['server_id'],
@@ -712,7 +756,6 @@ async def handle_messages(message: types.Message):
         asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
 
     elif user_state == 'waiting_for_key_update':
-        key_path_input = message.text.strip()
         entry = user_main_messages.get(user_id, {})
         server_id = entry.get('key_update_server_id')
         main_chat_id = entry.get('chat_id')
@@ -732,13 +775,13 @@ async def handle_messages(message: types.Message):
             asyncio.create_task(delete_message_after_delay(message.chat.id, message.message_id, delay=5))
             return
 
-        resolved_path = os.path.abspath(os.path.expanduser(key_path_input))
-        if not os.path.isfile(resolved_path):
+        resolved_path, key_error = await resolve_private_key_input(message, server_id)
+        if key_error:
             if main_chat_id and main_message_id:
                 await bot.edit_message_text(
                     chat_id=main_chat_id,
                     message_id=main_message_id,
-                    text="Файл не найден. Укажите корректный путь до приватного ключа:",
+                    text=key_error,
                     reply_markup=InlineKeyboardMarkup().add(
                         InlineKeyboardButton("Отмена", callback_data="manage_servers")
                     )
@@ -1694,7 +1737,12 @@ async def update_key_server_callback(callback_query: types.CallbackQuery):
     await bot.edit_message_text(
         chat_id=callback_query.message.chat.id,
         message_id=callback_query.message.message_id,
-        text=f"Введите путь до приватного SSH-ключа для сервера {server_id}:",
+        text=(
+            f"Укажите приватный SSH-ключ для сервера {server_id}:\n"
+            "1) путь до файла\n"
+            "2) вставьте содержимое ключа\n"
+            "3) отправьте файл с ключом"
+        ),
         reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("Отмена", callback_data="manage_servers")
         )
@@ -1727,7 +1775,12 @@ async def auth_type_callback(callback_query: types.CallbackQuery):
         await bot.edit_message_text(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
-            text="Введите путь до приватного SSH-ключа (например /home/user/.ssh/id_rsa):",
+            text=(
+                "Укажите приватный SSH-ключ:\n"
+                "1) путь до файла (например /home/user/.ssh/id_rsa)\n"
+                "2) вставьте содержимое ключа\n"
+                "3) отправьте файл с ключом"
+            ),
             reply_markup=InlineKeyboardMarkup().add(
                 InlineKeyboardButton("Отмена", callback_data="manage_servers")
             )

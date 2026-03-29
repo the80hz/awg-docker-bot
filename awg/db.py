@@ -369,12 +369,11 @@ class SSHManager:
                     else:
                         self.password = self._original_password
                 else:
-                    private_key = paramiko.RSAKey.from_private_key_file(self.key_path)
                     self.client.connect(
                         self.host,
                         self.port,
                         self.username,
-                        pkey=private_key,
+                        key_filename=self.key_path,
                         timeout=10,
                         look_for_keys=False,
                         allow_agent=False
