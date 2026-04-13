@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from awg import db
+from awg.platform.application import profile_registry
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,50 @@ class UserService:
             result.append(UserProfile(username=username, owner_id=owner_id))
         return result
 
+    def list_users(self) -> list[dict[str, str | int]]:
+        expirations = db.load_expirations()
+        counters: dict[str, dict[str, str | int]] = {}
+
+        for _, servers in expirations.items():
+            if not isinstance(servers, dict):
+                continue
+            for info in servers.values():
+                if not isinstance(info, dict):
+                    continue
+                owner_id = info.get('owner_id')
+                if owner_id is None:
+                    continue
+                owner_key = str(owner_id)
+                entry = counters.get(owner_key)
+                if entry:
+                    current_count = int(entry['profiles_count'])
+                    entry['profiles_count'] = current_count + 1
+                else:
+                    counters[owner_key] = {
+                        'user_id': owner_id,
+                        'profiles_count': 1,
+                    }
+
+        # Подмешиваем пользователей, которые есть только в profile_registry.
+        for entry in profile_registry.list_all_profiles():
+            owner_id = entry.get('owner_id')
+            if owner_id is None:
+                continue
+            owner_key = str(owner_id)
+            if owner_key not in counters:
+                counters[owner_key] = {
+                    'user_id': owner_id,
+                    'profiles_count': 0,
+                }
+
+        return list(counters.values())
+
     @staticmethod
-    def _resolve_owner_id(username: str, server_id: str, expirations: dict[str, Any]) -> str | int | None:
+    def _resolve_owner_id(
+        username: str,
+        server_id: str,
+        expirations: dict[str, Any],
+    ) -> str | int | None:
         user_servers = expirations.get(username)
         if not isinstance(user_servers, dict):
             return None
