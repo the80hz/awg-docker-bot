@@ -1,15 +1,32 @@
 import db
 from dotenv import load_dotenv
+import importlib.util
+import os
+import sys
+import sysconfig
+
+
+def _ensure_stdlib_platform_module():
+    stdlib_platform = os.path.join(sysconfig.get_path("stdlib"), "platform.py")
+    spec = importlib.util.spec_from_file_location("platform", stdlib_platform)
+    if spec is None or spec.loader is None:
+        return
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules["platform"] = module
+
+
+_ensure_stdlib_platform_module()
+
 import aiohttp
 import logging
 import asyncio
 import aiofiles
-import os
 import re
 import tempfile
 import json
 import subprocess
-import sys
 import pytz
 import zipfile
 import ipaddress
@@ -135,7 +152,6 @@ class AdminMessageDeletionMiddleware(BaseMiddleware):
 
 dp = Dispatcher(bot)
 scheduler = AsyncIOScheduler(timezone=pytz.UTC)
-scheduler.start()
 
 dp.middleware.setup(AdminMessageDeletionMiddleware())
 
@@ -2510,6 +2526,9 @@ async def on_startup(dp):
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(SERVERS_ROOT, exist_ok=True)
     os.makedirs(PROFILES_ROOT, exist_ok=True)
+    if not scheduler.running:
+        scheduler.start()
+
     await load_isp_cache_task()
     
     global current_server
@@ -2568,4 +2587,6 @@ async def on_shutdown(dp):
         scheduler.shutdown()
         logger.info("Планировщик остановлен.")
 
-executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+if __name__ == '__main__':
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
