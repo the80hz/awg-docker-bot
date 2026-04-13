@@ -96,7 +96,8 @@ class UserListResponse(BaseModel):
 
 
 class ServerData(BaseModel):
-    server_id: str
+    server_id: int | str
+    server_name: str | None = None
     host: str | None = None
     port: int | str | None = None
     username: str | None = None
@@ -148,7 +149,11 @@ class CreateProfileRequest(BaseModel):
 
 
 class CreateServerRequest(BaseModel):
-    server_id: str = Field(min_length=1, description="ID сервера")
+    server_id: int | str = Field(description="ID сервера")
+    server_name: str = Field(
+        min_length=1,
+        description="Человекочитаемое название сервера",
+    )
     host: str = Field(description="Host/IP сервера")
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(description="SSH пользователь")
@@ -162,6 +167,7 @@ class CreateServerRequest(BaseModel):
 
 
 class UpdateServerRequest(BaseModel):
+    server_name: str | None = None
     host: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     username: str | None = None
@@ -189,8 +195,17 @@ def _error(status_code: int, code: str, message: str) -> NoReturn:
 
 
 def _server_data(server_dict: dict) -> ServerData:
+    external_id = server_dict.get("id")
+    if external_id is None:
+        external_id = ""
+    elif isinstance(external_id, str) and external_id.isdigit():
+        external_id = int(external_id)
+    server_name = server_dict.get("name")
+    if not server_name:
+        server_name = str(external_id)
     return ServerData(
-        server_id=str(server_dict.get("id") or ""),
+        server_id=external_id,
+        server_name=server_name,
         host=server_dict.get("host"),
         port=server_dict.get("port"),
         username=server_dict.get("username"),
@@ -455,6 +470,7 @@ def create_server(payload: CreateServerRequest) -> ServerResponse:
 
     Аргументы (body):
     - server_id: строковый ID сервера.
+    - server_name: человекочитаемое имя сервера.
     - host: IP или DNS хост.
     - port: SSH порт (1..65535), по умолчанию 22.
     - username: SSH пользователь.
@@ -464,12 +480,14 @@ def create_server(payload: CreateServerRequest) -> ServerResponse:
     - endpoint: endpoint WireGuard (опционально).
 
     Возможные значения:
+    - server_id: int или str.
     - auth_type: "password" | "key".
     - password/key_path: в зависимости от auth_type.
     """
     try:
         server = server_service.create_server(
             server_id=payload.server_id,
+            server_name=payload.server_name,
             host=payload.host,
             port=payload.port,
             username=payload.username,
@@ -506,6 +524,7 @@ def update_server(
     - payload: набор полей для обновления.
 
     Возможные значения в payload:
+    - server_name: строка (например "spb1").
     - host, username, endpoint: строки.
     - port: 1..65535.
     - auth_type: "password" | "key".
@@ -515,6 +534,7 @@ def update_server(
     try:
         server = server_service.update_server(
             server_id=server_id,
+            server_name=payload.server_name,
             host=payload.host,
             port=payload.port,
             username=payload.username,

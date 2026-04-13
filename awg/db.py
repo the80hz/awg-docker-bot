@@ -150,9 +150,21 @@ def verify_password(password, hashed):
         return False
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
-def add_server(server_id, host, port, username, auth_type, password=None, key_path=None, endpoint=None):
+def add_server(
+    server_id,
+    host,
+    port,
+    username,
+    auth_type,
+    password=None,
+    key_path=None,
+    endpoint=None,
+    server_name=None,
+):
     servers = load_servers()
+    server_key = str(server_id)
     server_config = {
+        'name': server_name or str(server_id),
         'host': host,
         'port': port,
         'username': username,
@@ -165,12 +177,12 @@ def add_server(server_id, host, port, username, auth_type, password=None, key_pa
         'endpoint': endpoint or (host if host else None),
         'is_remote': 'true'
     }
-    servers[server_id] = server_config
+    servers[server_key] = server_config
     save_servers(servers)
     
     try:
         ssh = SSHManager(
-            server_id=server_id,
+            server_id=server_key,
             host=host,
             port=int(port),
             username=username,
@@ -185,10 +197,10 @@ def add_server(server_id, host, port, username, auth_type, password=None, key_pa
                 detected_endpoint = output.strip() if output and not error else None
                 if detected_endpoint:
                     server_config['endpoint'] = detected_endpoint
-                    servers[server_id] = server_config
+                    servers[server_key] = server_config
                     save_servers(servers)
     except Exception as e:
-        logger.error(f"Не удалось получить endpoint для сервера {server_id}: {e}")
+        logger.error(f"Не удалось получить endpoint для сервера {server_key}: {e}")
     
     return server_config
 
