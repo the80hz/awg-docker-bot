@@ -254,6 +254,11 @@ async def unhandled_exception_handler(
 
 @app.get("/health")
 def health() -> HealthResponse:
+    """Проверка доступности API.
+
+    Аргументы: нет.
+    Возможные значения: нет.
+    """
     return HealthResponse(data=HealthData())
 
 
@@ -266,6 +271,14 @@ def health() -> HealthResponse:
 def profiles_by_server(
     server_id: str = Path(description="ID сервера"),
 ) -> ProfileListResponse:
+    """Возвращает профили на сервере.
+
+    Аргументы:
+    - server_id: строковый ID сервера (например, "srv-1").
+
+    Возможные значения:
+    - server_id: любой существующий ID из списка /api/v1/servers.
+    """
     try:
         profiles = profile_service.list_profiles_by_server(server_id)
     except Exception as exc:
@@ -280,6 +293,18 @@ def profiles_by_server(
     summary="Создать профиль",
 )
 def create_profile(payload: CreateProfileRequest) -> CreateProfileResponse:
+    """Создает профиль пользователя на сервере.
+
+    Аргументы (body):
+    - server_id: строковый ID сервера.
+    - user_id: числовой или строковый ID владельца профиля.
+    - profile_name: имя профиля.
+
+    Возможные значения:
+    - user_id: int или str.
+    - profile_name: латиница/цифры/`_`/`-`/`.`.
+    - server_id: существующий ID сервера.
+    """
     try:
         created = profile_service.create_profile(
             server_id=payload.server_id,
@@ -312,6 +337,14 @@ def create_profile(payload: CreateProfileRequest) -> CreateProfileResponse:
 def delete_profile(
     profile_id: str = Path(description="Идентификатор профиля"),
 ) -> DeleteProfileResponse:
+    """Удаляет профиль по profile_id.
+
+    Аргументы:
+    - profile_id: UUID профиля из реестра.
+
+    Возможные значения:
+    - profile_id: валидный UUID, ранее выданный API.
+    """
     try:
         result = profile_service.delete_profile(profile_id)
     except KeyError as exc:
@@ -340,6 +373,16 @@ def profiles_by_user(
         description="Опциональный фильтр по серверу",
     ),
 ) -> ProfileListResponse:
+    """Возвращает профили пользователя.
+
+    Аргументы:
+    - user_id: ID пользователя-владельца.
+    - server_id: опциональный ID сервера для фильтрации.
+
+    Возможные значения:
+    - user_id: строка или число (передается как path string).
+    - server_id: None или существующий ID сервера.
+    """
     try:
         profiles = profile_service.list_profiles_by_owner(
             user_id=user_id,
@@ -357,6 +400,11 @@ def profiles_by_user(
     summary="Список пользователей",
 )
 def list_users() -> UserListResponse:
+    """Возвращает список пользователей сервиса.
+
+    Аргументы: нет.
+    Возможные значения: нет.
+    """
     try:
         users = user_service.list_users()
     except Exception as exc:
@@ -371,6 +419,11 @@ def list_users() -> UserListResponse:
     summary="Список серверов",
 )
 def list_servers() -> ServerListResponse:
+    """Возвращает список серверов.
+
+    Аргументы: нет.
+    Возможные значения: нет.
+    """
     try:
         servers = server_service.list_servers()
     except Exception as exc:
@@ -398,6 +451,22 @@ def list_servers() -> ServerListResponse:
     summary="Создать сервер",
 )
 def create_server(payload: CreateServerRequest) -> ServerResponse:
+    """Создает сервер в конфигурации.
+
+    Аргументы (body):
+    - server_id: строковый ID сервера.
+    - host: IP или DNS хост.
+    - port: SSH порт (1..65535), по умолчанию 22.
+    - username: SSH пользователь.
+    - auth_type: тип авторизации.
+    - password: пароль, если auth_type=password.
+    - key_path: путь к ключу, если auth_type=key.
+    - endpoint: endpoint WireGuard (опционально).
+
+    Возможные значения:
+    - auth_type: "password" | "key".
+    - password/key_path: в зависимости от auth_type.
+    """
     try:
         server = server_service.create_server(
             server_id=payload.server_id,
@@ -430,6 +499,19 @@ def update_server(
     payload: UpdateServerRequest,
     server_id: str = Path(description="ID сервера"),
 ) -> ServerResponse:
+    """Частично обновляет сервер.
+
+    Аргументы:
+    - server_id: ID сервера в path.
+    - payload: набор полей для обновления.
+
+    Возможные значения в payload:
+    - host, username, endpoint: строки.
+    - port: 1..65535.
+    - auth_type: "password" | "key".
+    - password: обязателен при auth_type=password.
+    - key_path: обязателен при auth_type=key.
+    """
     try:
         server = server_service.update_server(
             server_id=server_id,
@@ -461,6 +543,14 @@ def update_server(
 def delete_server(
     server_id: str = Path(description="ID сервера"),
 ) -> DeleteServerResponse:
+    """Удаляет сервер по ID.
+
+    Аргументы:
+    - server_id: строковый ID сервера.
+
+    Возможные значения:
+    - server_id: существующий ID сервера.
+    """
     try:
         deleted = server_service.delete_server(server_id)
     except Exception as exc:
@@ -483,6 +573,14 @@ def delete_server(
 def test_server_connection(
     server_id: str = Path(description="ID сервера"),
 ) -> ServerTestResponse:
+    """Проверяет SSH-подключение к серверу.
+
+    Аргументы:
+    - server_id: строковый ID сервера.
+
+    Возможные значения:
+    - server_id: существующий ID сервера.
+    """
     try:
         result = server_service.test_connection(server_id)
     except KeyError as exc:
